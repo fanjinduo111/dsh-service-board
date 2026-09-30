@@ -134,12 +134,38 @@ body.dshpb-docked .dshpb-panel > .dshpb-dialog { width:100%; min-width:0; box-si
   --dshpb-chrome-h:max(env(titlebar-area-height, 0px), 46px);
   position:absolute; top:var(--dshpb-chrome-h); right:0; bottom:0; left:0;
   height:auto; max-height:none;
+  /* The dialog is the panel's column, and this is not decoration: the published sheet
+     made the dialog a flex column, docking rewrote that rule for its geometry, and the
+     declarations below were dropped on the way. Without them the layout had no flex
+     parent - its flex:1 was inert, its height came from its content, and the log's 400
+     lines stretched the panel to 1,026,533px inside an 854px dialog (measured in Chrome
+     by test/log-band.mjs). None of it overflowed visibly: the panel is fixed, so
+     everything past the window edge was simply unreachable, and the log could not
+     scroll because nothing bounded it. */
+  display:flex; flex-direction:column; min-height:0; overflow:hidden;
 }
-/* At this width two side-by-side columns would each be too narrow to read, so the
-   log takes the whole panel and the list hides while it is open. */
-.dshpb-list-col { flex:1 1 auto; min-width:0; border-right:0; }
-.dshpb-log-col { flex:1 1 auto; min-width:0; }
-.dshpb-log-col.dshpb-log-on { flex:1 1 100%; }
+/* --- patched: the log is a band under the list, not a column beside it ---------
+   The log used to be a second column whose flex:1 1 100% was meant to make it "take the
+   whole panel while it is open". A flex-basis is not a width: in a nowrap row the list
+   keeps its content width and the log takes what is left of it, so the two squeeze each
+   other. With long log lines the log's max-content width even won the shrink and the
+   column measured 0px wide; with short ones the table was cut in half beside it.
+   Stacked instead: the list keeps the panel's full width and the log is a band across
+   the bottom, so no line of log text can set the table's width any more.
+
+   The band's height is a clamp rather than a percentage: a percentage flex-basis on the
+   log resolves against the layout's height, which flex itself resolves, and a
+   percentage max-height against an unresolved height is ignored outright. Clamping
+   against the viewport is deterministic both in the docked panel (a full-height column)
+   and in a centred dialog. */
+.dshpb-layout { flex:1 1 auto; min-height:0; flex-direction:column; }
+.dshpb-list-col { flex:1 1 auto; min-width:0; min-height:0; border-right:0; }
+/* The separator is the band's own top border, so it exists only while the log is open
+   (a closed log column is display:none) and the list needs no border of its own. */
+.dshpb-log-col { flex:0 0 auto; min-width:0; min-height:0; border-top:1px solid rgba(127,127,127,.18); }
+.dshpb-log-col.dshpb-log-on { display:flex; height:clamp(150px, 38vh, 420px); }
+/* 日志全屏：列表让位，横条吃满面板，clamp 必须让开。 */
+.dshpb-layout.dshpb-log-max .dshpb-log-col { display:flex; flex:1 1 auto; height:auto; min-height:0; }
 /* The panel is already a full-height column, so its fullscreen toggle is moot. */
 .dshpb-panel-max, .dshpb-dialog.dshpb-max { display:none; }
 
@@ -161,7 +187,9 @@ body.dshpb-docked .dshpb-log-head { border-bottom-color:var(--dsw-alias-border-l
 body.dshpb-docked .dshpb-head small,
 body.dshpb-docked .dshpb-log-head small,
 body.dshpb-docked .dshpb-sub { color:var(--dsw-alias-label-caption,#8b93a1); }
-body.dshpb-docked .dshpb-list-col { border-right-color:var(--dsw-alias-border-l1,rgba(127,127,127,.18)); }
+/* The separator between the list and the log band, in the application's own border
+   token, so a light theme does not keep the dark literal. */
+body.dshpb-docked .dshpb-log-col { border-top-color:var(--dsw-alias-border-l1,rgba(127,127,127,.18)); }
 /* A slim strip the window's own buttons cannot cover: the controls sit in the top
    right, so this row keeps them off the very top edge of the panel. */
 body.dshpb-docked .dshpb-grip { display:block; }
@@ -288,6 +316,12 @@ body.dshpb-docked .dshpb-close.dshpb-collapse:hover {
 .dshpb-svccmd { white-space:nowrap; }
 /* A service the SCM owns: the control explains itself instead of inviting a click. */
 .dshpb-btn-service { opacity:.75; cursor:default; }
+
+/* The row whose log the band is showing. The band's title names the service, but the
+   band is at the bottom of the panel and the row can be anywhere in the list, so the
+   list says it too - otherwise the user matches a pid by eye to find out. */
+.dshpb-table tr.dshpb-logging td { background:rgba(63,146,254,.10); }
+.dshpb-table tr.dshpb-logging td:first-child { box-shadow:inset 2px 0 0 rgba(63,146,254,.9); }
 
 /* --- the filter panel -------------------------------------------------------
    The panel listed every listening process on the machine, so the useful rows were
@@ -836,6 +870,9 @@ function apply(ctx) {
     }
     table.append(tb)
     body.replaceChildren(table)
+    // Re-derive the mark: the rows above are new elements, so a mark on the old ones
+    // left with them.
+    markLogSource()
   }
 
   /**
@@ -869,6 +906,9 @@ function apply(ctx) {
 
   function row(e) {
     const tr = document.createElement('tr')
+    // The row carries its pid so the log's source row can be found again after the
+    // eight-second refresh has rebuilt every row (see markLogSource).
+    tr.dataset.pid = String(e.pid)
     const cmdShort = (e.cmd ?? '').replace(/^"?"?[\w:\\.\-]+\s*/, '').slice(0, 70)
     const state = killing.has(e.pid) ? 'stopping' : e.state   // kill 在途乐观接管状态列
     const c1 = document.createElement('td')
@@ -1097,13 +1137,45 @@ function apply(ctx) {
     return `${e.name.replace(/\.exe$/i, '')}-${e.ports?.[0] ?? e.pid}`
   }
 
-  // ---------- 日志分栏 ----------
+  // ---------- 日志分栏（面板底部的横条）----------
+  /** The rendered rows of the service list. */
+  function logRows() {
+    const list = panel?.querySelector('.dshpb-list-col')
+    return list === undefined || list === null ? [] : [...list.querySelectorAll('.dshpb-table tbody tr')]
+  }
+  /**
+   * Mark the row whose log the band is showing.
+   *
+   * The mark cannot live on the element that was clicked: the eight-second refresh
+   * rebuilds every row, so it is re-derived from the log's pid after each render. That
+   * is also what makes clicking a second service's 日志 move the mark, instead of
+   * leaving two rows claiming the band.
+   * @param reveal - scroll the row back into view, for a click that may have pushed it
+   *   out of the shortened list. Not done on the periodic refresh, which would yank the
+   *   list while the user is reading it.
+   */
+  let markedPid = null
+  function markLogSource(reveal = false) {
+    const wanted = logColOn && logTarget ? String(logTarget.pid) : null
+    for (const tr of logRows()) {
+      const isSource = wanted !== null && tr.dataset.pid === wanted
+      tr.classList.toggle('dshpb-logging', isSource)
+      if (isSource) tr.setAttribute('aria-current', 'true')
+      else tr.removeAttribute('aria-current')
+    }
+    if (reveal && wanted !== null && wanted !== markedPid) {
+      const row = logRows().find((tr) => tr.dataset.pid === wanted)
+      if (row && typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'nearest' })
+    }
+    markedPid = wanted
+  }
   function showLog(e) {
     logTarget = e
     logColOn = true
     panel.querySelector('.dshpb-log-col')?.classList.add('dshpb-log-on')
     panel.querySelector('.dshpb-log-title').textContent = `${e.name} · pid ${e.pid}`
     panel.querySelector('.dshpb-log-path').textContent = e.logPath ?? ''
+    markLogSource(true)
     void loadLogOnce()
     stopLogStream()
     logTimer = setInterval(() => { if (logColOn) void loadLogOnce() }, 4000)
@@ -1114,6 +1186,7 @@ function apply(ctx) {
     stopLogStream()
     panel.querySelector('.dshpb-log-col')?.classList.remove('dshpb-log-on')
     panel.querySelector('.dshpb-layout')?.classList.remove('dshpb-log-max')
+    markLogSource()
   }
   function stopLogStream() { if (logTimer) { clearInterval(logTimer); logTimer = null } }
   async function loadLogOnce() {

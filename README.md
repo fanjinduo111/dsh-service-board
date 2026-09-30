@@ -111,6 +111,63 @@ a time. The file is re-read on every scan, so a hand edit takes effect without a
 restart, and a corrupt file falls back to the defaults rather than blanking the
 panel.
 
+### 5. `src/client/index.js` — the log is a band under the list, not a column beside it
+
+**Symptom:** 「现在日志跟列表在同一行，导致一行太宽了，日志应该出现在整个面板的靠下位置」.
+Clicking 日志 squeezed the service list instead of opening the log somewhere of its own.
+
+**Cause, measured rather than read.** `test/log-band.mjs` loads the real client file in
+real Chrome with a stubbed API and measures rectangles. Before this patch it reported:
+
+```
+layout height  : 1026533 vs dialog 854 (viewport 900)
+log            : 0x1026533 at 112..1026645
+log body       : 32x1026363 (scrolling=false)
+```
+
+1. **The log was a column, and `flex:1 1 100%` was believed to make it "take the whole
+   panel".** A flex-basis is not a width. In a nowrap row the list keeps its content
+   width and the log takes what is left, so the two squeeze each other — and with long
+   log lines the log's max-content width won the shrink, leaving the column 0px wide.
+   `panel-css.test.mjs` asserted that very rule and repeated its claim in a comment,
+   which is why this arrived as a person's report rather than as a failing test.
+2. **The panel's height came from its content.** The published sheet made `.dshpb-dialog`
+   a flex column (`display:flex; flex-direction:column; overflow:hidden`); docking
+   rewrote that rule for its geometry and lost those three declarations, so
+   `.dshpb-layout`'s `flex:1` had no flex parent to apply to. Nothing overflowed
+   *visibly* — the panel is `position:fixed` — so 400 log lines grew the panel to
+   1,026,533px inside an 854px dialog, and the log could not scroll either: everything
+   past the window edge was simply unreachable.
+
+**Fix:** the layout is a column, the list keeps the panel's full width, and the log is a
+band across the bottom with a height of its own and its own scrolling body. The height is
+a `clamp(150px, 38vh, 420px)` rather than a percentage: a percentage flex-basis on the log
+resolves against the layout's height, which flex itself resolves, and a percentage
+`max-height` against an unresolved height is ignored outright. The dialog is a flex column
+again and clips, so nothing can grow past the panel. The separator between the two is the
+band's own top border, which exists only while the log is open, so closing the log needs
+nothing undone.
+
+Clicking another service's 日志 switches the band to that service and **marks the source
+row** in the list (accent bar, background, `aria-current`): the band is at the bottom and
+the row can be anywhere in the list, so an unmarked list leaves the user matching a pid by
+eye to find out what is on screen. The mark is re-derived from the log's pid after every
+render, because the eight-second refresh rebuilds every row — which is also what makes a
+second click move the mark instead of leaving two rows claiming the band. Opening the band
+shortens the list, so the clicked row is scrolled back into view if that pushed it out;
+the periodic refresh deliberately does not, which would yank the list while it is read.
+
+**Verified by:** `test/log-band.mjs` drives the real client file in real Chromium — no DSH
+instance is needed, because the page provides the `window.__ModuleLoader__` the bundle
+registers with and stubs every request it makes — and asserts that the band is under the
+list, spans the panel, scrolls on its own, that the layout is never taller than the dialog,
+that the dialog never leaves the viewport, that a second service's 日志 switches the band
+and moves the mark, and that the mark survives an auto-refresh. `test/panel-css.test.mjs`
+asserts the structure that actually stacks, `test/panel-css-control.mjs` confirms every
+rule of it is absent from the published bundle *and* that the published sheet is the
+side-by-side, flex-column-dialog version this patch replaces, and `test/client-dom.test.mjs`
+drives the switch, the mark and the poll stopping on 收起 in jsdom.
+
 ## Three defects found by testing operations against real processes
 
 The first round of work on this plugin shipped a `停止` button that did nothing for
@@ -233,6 +290,7 @@ node test/panel-css.test.mjs      # the docked-panel stylesheet structure
 node test/panel-css-control.mjs   # negative control against the published bundle
 node test/client-dom.test.mjs     # the shipped client bundle driven in jsdom
 node test/check-css-literal.mjs src/client/index.js
+node test/log-band.mjs            # the log band under the list, measured in Chrome
 node test/cmdline.test.mjs        # Windows command-line splitting
 node test/probe-scanner.mjs       # the real scanner against this machine
 ```

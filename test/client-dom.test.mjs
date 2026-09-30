@@ -87,12 +87,19 @@ window.fetch = async (url, options) => {
             http: 0,
             session: "unknown",
             sessionTitle: null,
-            logPath: null,
+            logPath: "C:\\tmp\\mysql.log",
             inTree: false,
             serviceOwned: true,
           },
         ],
       }),
+    };
+  }
+  if (String(url).includes("/log")) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, lines: ["line one", "ERROR boom", "WARN careful"] }),
     };
   }
   return { ok: false, status: 404, json: async () => ({}) };
@@ -257,6 +264,94 @@ if (entry !== null) {
     const stateRequests = requests.filter((request) => request.url.includes("/state"));
     console.log(`state requests : ${stateRequests.length}`);
     if (stateRequests.length === 0) problems.push("opening the panel issued no state request");
+  }
+}
+
+// --- the log band switches between services ----------------------------------
+//
+// The band sits at the bottom of the panel, so which service it belongs to is not
+// obvious from the row that was clicked. The row is marked, and clicking a second
+// service's 日志 must move both the band and the mark. jsdom has no layout engine, so
+// the geometry is `log-band.mjs`'s job in a real browser; what is checked here is the
+// behaviour: which log is on screen, which request was made, and which row says so.
+
+if (entry !== null && document.querySelector(".dshpb-panel") !== null) {
+  const panel = document.querySelector(".dshpb-panel");
+  const logCol = panel.querySelector(".dshpb-log-col");
+  const logTitle = panel.querySelector(".dshpb-log-title");
+  const logPath = panel.querySelector(".dshpb-log-path");
+  const logBody = panel.querySelector(".dshpb-log-body");
+  const logRequests = () => requests.filter((request) => request.url.includes("/log"));
+  const markedRows = () => [...panel.querySelectorAll(".dshpb-table tbody tr.dshpb-logging")];
+  /** The 日志 button of the row naming `name`, or null. */
+  const logButtonOf = (name) => {
+    const row = [...panel.querySelectorAll(".dshpb-table tbody tr")]
+      .find((candidate) => candidate.querySelector(".dshpb-svcname")?.textContent === name);
+    return row === undefined ? null : [...row.querySelectorAll(".dshpb-btn")].find((b) => b.textContent === "日志") ?? null;
+  };
+
+  console.log(`log at rest    : open=${logCol.classList.contains("dshpb-log-on")} marked=${markedRows().length}`);
+  if (logCol.classList.contains("dshpb-log-on")) problems.push("the log column is open before anything was clicked");
+  if (markedRows().length !== 0) problems.push("a row claims the log before any log was opened");
+
+  const firstButton = logButtonOf("node.exe");
+  const secondButton = logButtonOf("mysqld.exe");
+  if (firstButton === null || secondButton === null) {
+    problems.push(`both rows with a log marker should offer 日志 (node=${firstButton !== null}, mysqld=${secondButton !== null})`);
+  } else {
+    firstButton.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    console.log(`opened         : "${logTitle.textContent}" <- ${logPath.textContent} marked=${markedRows().map((tr) => tr.querySelector(".dshpb-svcname").textContent).join(",")}`);
+    if (!logCol.classList.contains("dshpb-log-on")) problems.push("clicking 日志 did not open the log");
+    if (!/node\.exe/.test(logTitle.textContent) || !/7300/.test(logTitle.textContent)) {
+      problems.push(`the log title does not name the service it belongs to: "${logTitle.textContent}"`);
+    }
+    if (logPath.textContent !== "C:\\tmp\\server.log") problems.push(`the log path is wrong: ${logPath.textContent}`);
+    const firstRequests = logRequests();
+    if (firstRequests.length !== 1) problems.push(`expected one /log request, got ${firstRequests.length}`);
+    else if (!/"pid":7300/.test(String(firstRequests[0].options.body))) {
+      problems.push(`the /log request asked for the wrong pid: ${String(firstRequests[0].options.body)}`);
+    }
+    if (/不可用|加载失败/.test(logBody.textContent)) problems.push(`the log body reports a failure: ${logBody.textContent}`);
+    if (logBody.querySelectorAll("div").length !== 3) {
+      problems.push(`the log rendered ${logBody.querySelectorAll("div").length} lines, expected 3`);
+    }
+    if (!/dshpb-logline-err/.test(logBody.innerHTML)) problems.push("an ERROR line is not highlighted");
+    if (markedRows().length !== 1 || markedRows()[0].querySelector(".dshpb-svcname").textContent !== "node.exe") {
+      problems.push(`the wrong row is marked as the log's source: ${markedRows().map((tr) => tr.textContent.slice(0, 24)).join(" / ")}`);
+    }
+    if (markedRows()[0]?.getAttribute("aria-current") !== "true") {
+      problems.push("the marked row does not announce itself as the log's source");
+    }
+
+    // A second service's 日志 switches the band and moves the mark: one source, not two.
+    secondButton.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    console.log(`switched       : "${logTitle.textContent}" <- ${logPath.textContent} marked=${markedRows().map((tr) => tr.querySelector(".dshpb-svcname").textContent).join(",")}`);
+    if (!/mysqld\.exe/.test(logTitle.textContent) || !/7301/.test(logTitle.textContent)) {
+      problems.push(`the log did not switch to the second service: "${logTitle.textContent}"`);
+    }
+    if (logPath.textContent !== "C:\\tmp\\mysql.log") problems.push(`the switched log path is wrong: ${logPath.textContent}`);
+    if (!logRequests().some((request) => /"pid":7301/.test(String(request.options.body)))) {
+      problems.push("no /log request was made for the second service");
+    }
+    if (markedRows().length !== 1) {
+      problems.push(`${markedRows().length} rows claim the log after switching, expected exactly 1`);
+    } else if (markedRows()[0].querySelector(".dshpb-svcname").textContent !== "mysqld.exe") {
+      problems.push("the mark did not move to the second service");
+    }
+
+    // Closing the band clears the mark and stops the poll: a closed panel must not keep
+    // asking the host for a log nobody is looking at.
+    panel.querySelector(".dshpb-log-close").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    const afterClose = logRequests().length;
+    if (logCol.classList.contains("dshpb-log-on")) problems.push("收起日志 did not close the log");
+    if (markedRows().length !== 0) problems.push(`${markedRows().length} rows stay marked after the log is closed`);
+    await new Promise((resolve) => setTimeout(resolve, 4300));
+    console.log(`after 收起     : open=${logCol.classList.contains("dshpb-log-on")} /log requests ${afterClose} -> ${logRequests().length}`);
+    if (logRequests().length !== afterClose) {
+      problems.push(`the log poll kept running after the log was closed (${afterClose} -> ${logRequests().length} requests)`);
+    }
   }
 }
 

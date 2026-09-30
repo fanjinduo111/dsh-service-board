@@ -32,7 +32,10 @@ try {
     ["the mask is disabled", /\.dshpb-mask\s*\{[^}]*display:\s*none\s*!important/],
     ["the panel is docked", /\.dshpb-panel\s*\{[^}]*inset:\s*auto\s+0\s+0\s+auto/],
     ["the dialog is docked", /\.dshpb-panel\s*>\s*\.dshpb-dialog/],
-    ["the log takes the full width", /\.dshpb-log-col\.dshpb-log-on\s*\{[^}]*flex:\s*1\s+1\s+100%/],
+    ["the dialog is a flex column that clips", /\.dshpb-panel\s*>\s*\.dshpb-dialog\s*\{[^}]*display:\s*flex[^}]*overflow:\s*hidden/],
+    ["the layout stacks", /\.dshpb-layout\s*\{[^}]*flex-direction:\s*column/],
+    ["the log is a band with its own height", /\.dshpb-log-col\.dshpb-log-on\s*\{[^}]*height:\s*clamp\(/],
+    ["the source row is marked", /tr\.dshpb-logging/],
     ["the fullscreen toggle is hidden", /\.dshpb-panel-max[^{]*\{[^}]*display:\s*none/],
   ];
   const problems = [];
@@ -42,7 +45,7 @@ try {
     if (present) problems.push(`the published bundle already has "${name}", so the test cannot attribute it to the patch`);
   }
 
-  // And the centred-modal rules the patch replaces must still be there.
+  // And the rules the patch replaces must still be there, or the premise is wrong.
   const stillCentred = /\.dshpb-panel\s*\{[^}]*align-items:\s*center[^}]*justify-content:\s*center/.test(stripped);
   console.log(`${stillCentred ? "PRESENT" : "absent "}  the original centred-modal panel rule`);
   if (!stillCentred) problems.push("the published bundle does not centre the panel, so the premise of this patch is wrong");
@@ -50,6 +53,18 @@ try {
   const stillMasked = /\.dshpb-mask\s*\{[^}]*position:\s*fixed/.test(stripped);
   console.log(`${stillMasked ? "PRESENT" : "absent "}  the original full-screen mask rule`);
   if (!stillMasked) problems.push("the published bundle has no full-screen mask, so the premise of this patch is wrong");
+
+  // The log used to be a column sharing the row with the list - the layout this patch
+  // replaces. If the published bundle already stacked it, the patch would be pointless.
+  const stillBeside = /\.dshpb-log-col\s*\{[^}]*flex:\s*1\s+1\s+48%/.test(stripped);
+  console.log(`${stillBeside ? "PRESENT" : "absent "}  the original log column beside the list`);
+  if (!stillBeside) problems.push("the published bundle does not put the log beside the list, so the premise of this patch is wrong");
+
+  // The dialog the patch restores as a flex column: present in the published sheet,
+  // which is why losing it while docking was a regression rather than a design choice.
+  const publishedDialogColumn = /\.dshpb-dialog\s*\{[^}]*display:\s*flex;\s*flex-direction:\s*column/.test(stripped);
+  console.log(`${publishedDialogColumn ? "PRESENT" : "absent "}  the published dialog's flex column`);
+  if (!publishedDialogColumn) problems.push("the published dialog is not a flex column, so the regression this patch repairs did not exist");
 
   if (problems.length > 0) {
     console.error("\nFAILED:");

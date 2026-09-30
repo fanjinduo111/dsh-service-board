@@ -255,19 +255,75 @@ assert.ok(
   "no rule may still position the mask across the viewport",
 );
 
-// --- the log stacks instead of sitting beside the list -----------------------
+// --- the log is a band under the list, not a column beside it ----------------
+//
+// What this replaces: an assertion that the open log's rule reads `flex:1 1 100%` and
+// a comment claiming that makes it "take the whole docked width". It does not. A
+// flex-basis is not a width, and Chrome kept laying the two out side by side: with long
+// log lines the log's max-content width won the shrink and the column measured 0px
+// wide, with short ones the table was cut in half beside it. The stylesheet test passed
+// throughout. So this asserts the structure that actually stacks, and `log-band.mjs`
+// measures the result in a real browser.
+const layoutRule = lastRule(".dshpb-layout");
+assert.ok(layoutRule !== undefined, "the sheet styles the layout");
+assert.ok(
+  /flex-direction:\s*column/.test(layoutRule.body),
+  `the log can only sit under the list if the layout is a column (found: ${layoutRule.body})`,
+);
 
 const logOnRule = lastRule(".dshpb-log-col.dshpb-log-on");
 assert.ok(logOnRule !== undefined, "the open log column has a rule");
 assert.ok(
-  /flex:\s*1\s+1\s+100%/.test(logOnRule.body),
-  `the open log takes the whole docked width (found: ${logOnRule.body})`,
+  /height:\s*clamp\(/.test(logOnRule.body),
+  `the open log states its own height, so the list keeps its share (found: ${logOnRule.body})`,
 );
-
+assert.ok(
+  !/flex:\s*1\s+1\s+(100%|48%)/.test(logOnRule.body),
+  `the open log must not claim a share of a row any more (found: ${logOnRule.body})`,
+);
+// The band's own top border is the separator, and a closed log column is display:none,
+// so nothing has to be undone when the log is closed.
+const logRule = lastRule(".dshpb-log-col");
+assert.ok(
+  /border-top:/.test(logRule.body),
+  `the band is separated from the list by a top border on the band (found: ${logRule.body})`,
+);
 const listRule = lastRule(".dshpb-list-col");
 assert.ok(
   /min-width:\s*0/.test(listRule.body) && !/min-width:\s*340px/.test(listRule.body),
   "the list column must drop its 340px minimum, which would overflow a docked panel",
+);
+assert.ok(
+  /flex:\s*1\s+1\s+auto/.test(listRule.body),
+  `the list takes the height the band leaves (found: ${listRule.body})`,
+);
+
+// The dialog is the flex column that bounds all of it. The published sheet had one;
+// docking rewrote that rule for its geometry and lost `display:flex` with it, so the
+// layout's `flex:1` was inert, the panel's height came from its content, and 400 log
+// lines made it 1,026,533px tall inside an 854px dialog.
+const dialogBodies = all
+  .filter((rule) => rule.selector.includes(".dshpb-panel > .dshpb-dialog"))
+  .map((rule) => rule.body)
+  .join(" ");
+assert.ok(
+  /display:\s*flex/.test(dialogBodies) && /flex-direction:\s*column/.test(dialogBodies),
+  `the dialog must lay the panel out as a column (found: ${dialogBodies})`,
+);
+assert.ok(
+  /overflow:\s*hidden/.test(dialogBodies),
+  `the dialog must clip, so no content can grow past the panel (found: ${dialogBodies})`,
+);
+const logBodyRule = lastRule(".dshpb-log-body");
+assert.ok(
+  /overflow:\s*auto/.test(logBodyRule.body),
+  `the log body scrolls inside the band (found: ${logBodyRule.body})`,
+);
+// 日志全屏 still means the band takes the panel, so the clamp has to be released.
+const logMaxRule = lastRule(".dshpb-layout.dshpb-log-max .dshpb-log-col");
+assert.ok(
+  logMaxRule !== undefined && /height:\s*auto/.test(logMaxRule.body),
+  `log fullscreen releases the band's clamp (found: ${logMaxRule?.body})`,
 );
 
 // --- the moot fullscreen toggles are hidden ----------------------------------
@@ -347,7 +403,8 @@ console.log(`stylesheet rules : ${all.length}`);
 console.log(`panel dock       : ${panelRule.selector} { ${panelRule.body} }`);
 console.log(`dialog docked    : ${dialogRule.body}`);
 console.log(`mask disabled    : ${maskDisabled}`);
-console.log(`log open rule    : ${logOnRule.body}`);
+console.log(`layout           : ${layoutRule.body}`);
+console.log(`log band         : ${logOnRule.body}`);
 console.log("\npanel css tests passed");
 
 // Nothing here keeps the loop alive, but be explicit for symmetry with the
