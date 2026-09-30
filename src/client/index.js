@@ -150,10 +150,57 @@ body.dshpb-docked .dshpb-btn:hover { background:var(--dsw-alias-fill-l2,rgba(127
 /* The header sits against the window's own controls, so keep its padding and give
    the collapse control room to breathe away from the corner. */
 body.dshpb-docked .dshpb-head { padding:12px 14px; }
-body.dshpb-docked .dshpb-headbtns { gap:6px; }
-/* The collapse control is a text button, not a glyph, so it cannot be confused
-   with the window's own close button a few pixels away in the same corner. */
-.dshpb-close.dshpb-collapse { font-size:12px; padding:4px 10px; line-height:1.4; }
+body.dshpb-docked .dshpb-headbtns { gap:8px; }
+
+/* Header controls, made plainly visible.
+   The first version styled the collapse control as bare text: no border, no
+   background, 12px, sitting in the same corner as the window's own close glyph. A
+   user reported that no collapse button existed at all — it was there and
+   unfindable. Both header buttons are now solid, labelled controls with a real
+   border, a background, and a hit area large enough to aim at. */
+body.dshpb-docked .dshpb-headbtns .dshpb-btn,
+.dshpb-close.dshpb-collapse {
+  display:inline-flex; align-items:center; gap:5px;
+  font-size:13px; font-weight:500; line-height:1.2;
+  padding:7px 14px; min-height:32px; border-radius:7px;
+  border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.35));
+  background:var(--dsw-alias-fill-l1,rgba(127,127,127,.08));
+  color:var(--dsw-alias-label-primary,#e6e8ec);
+  cursor:pointer; white-space:nowrap;
+}
+body.dshpb-docked .dshpb-headbtns .dshpb-btn:hover,
+.dshpb-close.dshpb-collapse:hover {
+  background:var(--dsw-alias-fill-l2,rgba(127,127,127,.18));
+  border-color:var(--dsw-alias-border-l3,rgba(127,127,127,.5));
+}
+/* The collapse control is the primary action in this header, so it carries the
+   accent colour: a labelled button in the accent style reads as "this collapses the
+   panel", where a grey glyph in the corner read as "this closes the window".
+   The body-qualified selector is deliberate. The docked rule for dshpb-close sets
+   the caption colour for the glyph buttons, and without the extra specificity here
+   it won, leaving grey text on the accent surface. */
+body.dshpb-docked .dshpb-close.dshpb-collapse {
+  border-color:var(--dsw-alias-brand-primary,#3f92fe);
+  background:var(--dsw-alias-brand-primary,#3f92fe);
+  color:#fff; font-weight:600;
+  margin-left:6px; box-shadow:0 1px 3px rgba(0,0,0,.22);
+}
+body.dshpb-docked .dshpb-close.dshpb-collapse:hover {
+  border-color:var(--dsw-alias-brand-text,#2f7fe8);
+  background:var(--dsw-alias-brand-text,#2f7fe8);
+  color:#fff;
+}
+/* The filter control toggles a section rather than acting, so it stays secondary,
+   but it keeps the shared size so both are equally easy to hit. */
+.dshpb-cfgtoggle[aria-expanded="true"] {
+  border-color:var(--dsw-alias-brand-primary,#3f92fe);
+  color:var(--dsw-alias-brand-primary,#5ba4ff);
+}
+/* A chevron sets the collapse control apart from the window's own buttons, which sit
+   a few pixels away in the same corner. The chevron is the literal character: a CSS
+   escape like backslash-00BB is an octal escape inside this JavaScript template
+   literal and fails to parse. */
+.dshpb-close.dshpb-collapse::before { content:"»"; font-size:15px; line-height:1; }
 `
 
 function apply(ctx) {
@@ -428,7 +475,7 @@ function apply(ctx) {
       closeControl.setAttribute('aria-label', '收起服务面板')
       closeControl.setAttribute('title', '收起服务面板（不影响 DSH 窗口）')
       closeControl.textContent = '收起'
-      closeControl.classList.add('dshpb-collapse')
+      closeControl.classList.add('dshpb-collapse', 'dshpb-btn-primary')
     }
     const logClose = panel.querySelector('.dshpb-log-close')
     if (logClose) {

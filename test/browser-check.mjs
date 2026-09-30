@@ -175,11 +175,43 @@ try {
         headerHtml: header === null ? null : header.outerHTML.replace(/\s+/g, " ").slice(0, 400),
         rootInset: getComputedStyle(document.getElementById("root") ?? document.body).paddingRight,
         rowCount: panel.querySelectorAll(".dshpb-table tbody tr").length,
+        // The collapse control existed but was unfindable: bare 12px text with no
+        // border or background. Its rendered box and colour are asserted now, because
+        // "present in the DOM" was not the same as "visible to a person".
+        collapseBox: (() => {
+          const node = panel.querySelector(".dshpb-close:not(.dshpb-log-close)");
+          if (node === null) return null;
+          const rect = node.getBoundingClientRect();
+          const nodeStyle = getComputedStyle(node);
+          return {
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+            fontSize: nodeStyle.fontSize,
+            background: nodeStyle.backgroundColor,
+            color: nodeStyle.color,
+            border: `${nodeStyle.borderTopWidth} ${nodeStyle.borderTopStyle}`,
+            visible: nodeStyle.display !== "none" && nodeStyle.visibility !== "hidden" && rect.width > 0,
+          };
+        })(),
+        filterBox: (() => {
+          const node = panel.querySelector(".dshpb-cfgtoggle");
+          if (node === null) return null;
+          const rect = node.getBoundingClientRect();
+          return { width: Math.round(rect.width), height: Math.round(rect.height) };
+        })(),
       };
     });
 
     console.log("panel report   :");
-    for (const [key, value] of Object.entries(report)) console.log(`  ${key.padEnd(14)} ${value}`);
+    for (const [key, value] of Object.entries(report)) {
+      // Nested boxes are printed field by field; the default serialisation showed
+      // them as [object Object], which hid the measurements this check exists for.
+      if (value !== null && typeof value === "object") {
+        console.log(`  ${key.padEnd(14)} ${Object.entries(value).map(([k, v]) => `${k}=${v}`).join(" ")}`);
+      } else {
+        console.log(`  ${key.padEnd(14)} ${value}`);
+      }
+    }
 
     if (!report.panel) problems.push("clicking the entry did not create the panel");
     else {
@@ -189,6 +221,27 @@ try {
       if (report.filterVisible === "none") problems.push("the filter control is hidden");
       if (!/收起/.test(report.collapse ?? "")) problems.push(`the collapse control reads ${JSON.stringify(report.collapse)}`);
       if (!(Number.parseFloat(report.rootInset) > 0)) problems.push(`the app did not reserve space (root padding-right ${report.rootInset})`);
+
+      // A control nobody can find is not a control. These bounds come from the
+      // complaint that the buttons were too small to notice or aim at.
+      const box = report.collapseBox;
+      if (box === null || box.visible !== true) {
+        problems.push("the collapse control is not visible");
+      } else {
+        if (box.height < 28) problems.push(`the collapse control is only ${box.height}px tall`);
+        if (box.width < 64) problems.push(`the collapse control is only ${box.width}px wide`);
+        if (Number.parseFloat(box.fontSize) < 13) problems.push(`the collapse control's text is ${box.fontSize}`);
+        const background = String(box.background);
+        const transparent = background === "rgba(0, 0, 0, 0)" || background === "transparent";
+        if (transparent) problems.push("the collapse control has no background, so it reads as plain text");
+        if (!/solid/.test(box.border)) problems.push(`the collapse control has no border (${box.border})`);
+      }
+      const filterBox = report.filterBox;
+      if (filterBox === null) problems.push("the filter control has no box");
+      else {
+        if (filterBox.height < 28) problems.push(`the filter control is only ${filterBox.height}px tall`);
+        if (filterBox.width < 48) problems.push(`the filter control is only ${filterBox.width}px wide`);
+      }
     }
 
     await page.screenshot({ path: resolve(shots, "panel-open.png") });
