@@ -183,6 +183,12 @@ body.dshpb-docked { --dshpb-chrome-h:max(env(titlebar-area-height, 0px), 46px); 
 body.dshpb-docked .dshpb-panel {
   background:var(--dsw-alias-bg-base,#1e222a);
   top:0; right:0; bottom:0; left:auto; height:100vh;
+  /* Above the application's own shell. The app mounts a fixed root at z-index 1000
+     that spans the whole viewport, and the panel's original 901 put it underneath:
+     the app painted over the panel's left edge, hiding the first two dozen pixels of
+     every line — its own left padding. The panel is a sibling of that root, so the
+     only thing that decides this is the number. */
+  z-index:1100;
 }
 
 /* Header controls, made plainly visible.
@@ -234,6 +240,64 @@ body.dshpb-docked .dshpb-close.dshpb-collapse:hover {
    escape like backslash-00BB is an octal escape inside this JavaScript template
    literal and fails to parse. */
 .dshpb-close.dshpb-collapse::before { content:"»"; font-size:15px; line-height:1; }
+
+/* A wildcard bind is worth distinguishing at a glance from a loopback one: the
+   first is reachable from the network, the second is not. */
+.dshpb-port-any { border-style:dashed; }
+
+/* The action column: buttons keep their label on one line, and the column is wide
+   enough for the longest of them. "停止" wrapped onto two lines in a screenshot
+   because the cell had no room, which reads as a broken control. */
+.dshpb-table td:last-child { white-space:nowrap; min-width:150px; }
+.dshpb-btn { white-space:nowrap; }
+/* A service the SCM owns: the control explains itself instead of inviting a click. */
+.dshpb-btn-service { opacity:.75; cursor:default; }
+
+/* --- the filter panel -------------------------------------------------------
+   The panel listed every listening process on the machine, so the useful rows were
+   buried under whatever else happened to hold a port. These controls state the three
+   filters the host applies.
+
+   Laid out as stacked fields rather than a label column: the first version put the
+   labels in a fixed 64px column beside their controls and at this width the label
+   text ran straight over the inputs. */
+.dshpb-config { box-sizing:border-box; padding:14px 16px 12px;
+  border-bottom:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.2));
+  background:var(--dsw-alias-fill-l1,rgba(127,127,127,.05)); }
+.dshpb-config[hidden] { display:none; }
+.dshpb-cfghead { margin-bottom:12px; font-size:13px; font-weight:600; color:var(--dsw-alias-label-primary,#e6e8ec); }
+.dshpb-field { margin-bottom:14px; }
+.dshpb-flabel { display:block; margin-bottom:6px; font-size:12px; font-weight:500; color:var(--dsw-alias-label-primary,#e6e8ec); }
+.dshpb-fhint { margin:6px 0 0; font-size:11px; line-height:1.5; color:var(--dsw-alias-label-caption,#8b93a1); }
+
+/* A segmented control for the two mutually exclusive scopes: the selected side is
+   filled with the accent surface, so the current mode reads at a glance instead of
+   being inferred from which button happens to be disabled. */
+.dshpb-seg { display:flex; border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.35));
+  border-radius:7px; overflow:hidden; }
+.dshpb-segbtn { flex:1 1 0; min-width:0; padding:7px 8px; border:0; cursor:pointer; font:inherit; font-size:12px;
+  background:var(--dsw-alias-bg-base,#1e222a); color:var(--dsw-alias-label-primary,#e6e8ec); }
+.dshpb-segbtn + .dshpb-segbtn { border-left:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.35)); }
+.dshpb-segbtn:hover { background:var(--dsw-alias-fill-l2,rgba(127,127,127,.15)); }
+.dshpb-segbtn[data-active="true"] { background:var(--dsw-alias-brand-primary,#3f92fe); border-color:transparent;
+  color:#fff; font-weight:600; }
+
+.dshpb-input { display:block; width:100%; box-sizing:border-box; padding:7px 10px; border-radius:7px;
+  font:inherit; font-size:12px; color:var(--dsw-alias-label-primary,#e6e8ec);
+  background:var(--dsw-alias-bg-base,#1e222a);
+  border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.35)); }
+.dshpb-input::placeholder { color:var(--dsw-alias-label-dimmed,#767e8c); }
+.dshpb-input:focus { outline:none; border-color:var(--dsw-alias-brand-primary,#3f92fe);
+  box-shadow:0 0 0 2px rgba(63,146,254,.22); }
+
+/* The save button is right-aligned and sized like a control, not a footnote: it was
+   smaller than the inputs it commits. */
+.dshpb-cfgfoot { display:flex; align-items:center; justify-content:flex-end; margin-top:2px; }
+.dshpb-cfgsaved { margin-right:auto; font-size:11px; color:var(--dsw-alias-brand-text,#5ba4ff); }
+.dshpb-cfgsave { margin-right:0; padding:7px 20px; min-height:32px; font-size:12px; font-weight:600; }
+.dshpb-cfgpath { margin:12px 0 0; padding-top:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  font-size:10px; color:var(--dsw-alias-label-dimmed,#767e8c);
+  border-top:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.16)); }
 `
 
 function apply(ctx) {
@@ -335,6 +399,14 @@ function apply(ctx) {
       if (data?.ok !== true) { alert(data?.error ?? '保存失败'); return }
       config = data.config ?? config
       renderConfig()
+      // Confirm in place: a settings panel that saves silently leaves the user unsure
+      // whether the click registered, and the change is otherwise only visible as rows
+      // appearing or disappearing in the list.
+      const status = panel?.querySelector('.dshpb-cfgsaved')
+      if (status) {
+        status.textContent = '已保存'
+        window.setTimeout(() => { if (status.isConnected) status.textContent = '' }, 2400)
+      }
       refresh()
     } catch (error) {
       alert(describeFailure(error))
@@ -356,24 +428,42 @@ function apply(ctx) {
   function renderConfig() {
     const box = panel?.querySelector('.dshpb-config')
     if (!box) return
+    const scopes = [
+      { key: 'all', label: '全部监听', hint: '这台机器上每一个正在监听的进程。' },
+      { key: 'session', label: '仅 Agent 启动', hint: '只显示带 DSH 会话标记、或属于宿主进程树的服务。' },
+    ]
+    const activeHint = (scopes.find((scope) => scope.key === config.scope) ?? scopes[0]).hint
+    // Each field is a stacked block: label, control, then the sentence explaining what
+    // the field does. The first version put the labels in a fixed narrow column beside
+    // the controls, and at this panel width the labels overlapped the inputs.
     box.innerHTML = `
-      <div class="dshpb-cfgrow">
-        <label class="dshpb-cfglabel">显示范围</label>
-        <button class="dshpb-btn dshpb-scope" data-scope="all" ${config.scope === 'all' ? 'disabled' : ''}>全部监听</button>
-        <button class="dshpb-btn dshpb-scope" data-scope="session" ${config.scope === 'session' ? 'disabled' : ''}>仅 Agent 启动</button>
+      <div class="dshpb-cfghead">筛选显示的服务</div>
+      <div class="dshpb-field">
+        <div class="dshpb-flabel">显示范围</div>
+        <div class="dshpb-seg" role="group" aria-label="显示范围">
+          ${scopes.map((scope) => `
+            <button type="button" class="dshpb-segbtn" data-scope="${scope.key}"
+              aria-pressed="${config.scope === scope.key}" title="${escapeAttr(scope.hint)}"${config.scope === scope.key ? ' data-active="true"' : ''}>${scope.label}</button>`).join('')}
+        </div>
+        <p class="dshpb-fhint">${escapeHtml(activeHint)}</p>
       </div>
-      <div class="dshpb-cfgrow">
-        <label class="dshpb-cfglabel" for="dshpb-ports">只看端口</label>
-        <input class="dshpb-input" id="dshpb-ports" placeholder="如 3306, 5173（留空=不限）" value="${escapeAttr(config.ports.join(', '))}">
+      <div class="dshpb-field">
+        <label class="dshpb-flabel" for="dshpb-ports">只看端口</label>
+        <input class="dshpb-input" id="dshpb-ports" inputmode="numeric" autocomplete="off"
+          placeholder="3306, 5173" value="${escapeAttr(config.ports.join(', '))}">
+        <p class="dshpb-fhint">留空表示不限。填了端口后，只显示这些端口上的服务。</p>
       </div>
-      <div class="dshpb-cfgrow">
-        <label class="dshpb-cfglabel" for="dshpb-hide">排除名称</label>
-        <input class="dshpb-input" id="dshpb-hide" placeholder="如 baidu, Windows（逗号分隔）" value="${escapeAttr(config.hide.join(', '))}">
+      <div class="dshpb-field">
+        <label class="dshpb-flabel" for="dshpb-hide">排除名称</label>
+        <input class="dshpb-input" id="dshpb-hide" autocomplete="off"
+          placeholder="baidu, Windows" value="${escapeAttr(config.hide.join(', '))}">
+        <p class="dshpb-fhint">按进程名排除，逗号分隔，不区分大小写。</p>
       </div>
       <div class="dshpb-cfgfoot">
-        <button class="dshpb-btn dshpb-btn-primary" data-act="cfgsave">保存</button>
-        <span class="dshpb-cfghint">${configPath ? `配置文件：${escapeHtml(configPath)}` : ''}</span>
-      </div>`
+        <span class="dshpb-cfgsaved" role="status" aria-live="polite"></span>
+        <button type="button" class="dshpb-btn dshpb-btn-primary dshpb-cfgsave" data-act="cfgsave">保存</button>
+      </div>
+      <p class="dshpb-cfgpath" title="${escapeAttr(configPath)}">配置文件：${escapeHtml(configPath)}</p>`
   }
   function dockWidth() {
     // Trimmed from a 360-560 range: the panel is a monitoring column beside the
@@ -865,35 +955,7 @@ function apply(ctx) {
         body: JSON.stringify({ pid: logTarget.pid, lines: 400 }),
       })
       const data = await res.json()
-      if (!data.ok) { bodyEl.textContent = `日志不可用：${data.error ?? res.status}/* A wildcard bind is worth distinguishing at a glance from a loopback one: the
-   first is reachable from the network, the second is not. */
-.dshpb-port-any { border-style:dashed; }
-
-/* The action column: buttons keep their label on one line, and the column is wide
-   enough for the longest of them. "停止" wrapped onto two lines in a screenshot
-   because the cell had no room, which reads as a broken control. */
-.dshpb-table td:last-child { white-space:nowrap; min-width:150px; }
-.dshpb-btn { white-space:nowrap; }
-/* A service the SCM owns: the control explains itself instead of inviting a click. */
-.dshpb-btn-service { opacity:.75; cursor:default; }
-
-/* --- the filter panel -------------------------------------------------------
-   The panel listed every listening process on the machine, so the useful rows were
-   buried under whatever else happened to hold a port. These controls state the
-   three filters the host applies. */
-.dshpb-config { padding:10px 14px; border-bottom:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.2)); background:var(--dsw-alias-fill-l1,rgba(127,127,127,.04)); }
-.dshpb-config[hidden] { display:none; }
-.dshpb-cfgrow { display:flex; align-items:center; margin-bottom:8px; }
-.dshpb-cfglabel { flex:0 0 64px; font-size:12px; color:var(--dsw-alias-label-caption,#8b93a1); }
-.dshpb-input { flex:1 1 auto; min-width:0; box-sizing:border-box; padding:5px 8px; border-radius:6px; font:inherit; font-size:12px;
-  color:var(--dsw-alias-label-primary,#e6e8ec); background:var(--dsw-alias-bg-l1,transparent);
-  border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3)); }
-.dshpb-input:focus { outline:none; border-color:var(--dsw-alias-brand-primary,#3f92fe); }
-.dshpb-scope { margin-right:6px; }
-.dshpb-scope[disabled] { opacity:.55; cursor:default; }
-.dshpb-cfgfoot { display:flex; align-items:center; margin-top:2px; }
-.dshpb-cfghint { margin-left:10px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:var(--dsw-alias-label-caption,#8b93a1); }
-`; return }
+      if (!data.ok) { bodyEl.textContent = `日志不可用：${data.error ?? res.status}`; return }
       const nearBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 60
       bodyEl.replaceChildren(...data.lines.map((line) => {
         const d = document.createElement('div')

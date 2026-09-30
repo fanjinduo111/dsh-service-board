@@ -130,6 +130,40 @@ where the earlier tests had stubbed:
    reports failure as a result — `{ killed, failed }` — and falls back to signalling
    the target directly.
 
+## Two defects that only a real browser could show
+
+A user reported that the panel had no collapse button. It did: the header markup
+declared one, `client-dom.test.mjs` found it, and `browser-check.mjs` measured it. It
+was simply impossible to see or click, for two separate reasons.
+
+1. **It was under the window's own buttons.** The docked panel starts at the top of
+   the viewport, and the native minimise / maximise / close buttons occupy the same
+   top-right corner. The header controls were drawn underneath them. The dialog is now
+   inset below that strip.
+2. **It was under the application's root.** Once the header moved down, its text was
+   still clipped by about 24px on the left. Every `getBoundingClientRect` said the text
+   was inside the panel; the pixels disagreed. The app mounts a fixed root at
+   `z-index: 1000` and the panel's original `901` put the panel *underneath* it, so the
+   app's own 24px left padding painted over the first two dozen pixels of every line.
+   The panel is now `1100`, and `browser-check.mjs` asserts with `elementFromPoint`
+   that a point inside the panel actually reaches the panel — the only kind of check
+   that sees this class of bug.
+
+A third defect in the same family was self-inflicted and worth recording: the docked
+rule used a `padding-top` to clear the control strip, on a dialog that was
+`height: 100vh` with `box-sizing: border-box`. The padding pushed the box to `-46px`
+and the content back to `0`, so the two offsets cancelled and the header did not move.
+Anchoring both edges is the version that works.
+
+**And one that was invisible for several rounds:** a stylesheet edit was applied by
+matching `...res.status}\`; return }` in a function below the sheet, so the CSS landed
+*inside* a template literal and `const CSS` never closed. Every docked style silently
+stopped applying, while `check-css-literal.mjs` reported the file healthy — its span
+ran from `const CSS = \`` to the *next* backtick, which was then far away, so it took
+the whole polluted region for the stylesheet and found its braces balanced.
+`check-css-literal-control.mjs` now reproduces that exact corruption and asserts the
+guard rejects it, and the guard locates the literal's real end instead.
+
 ## Tests
 
 ```sh

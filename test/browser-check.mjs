@@ -200,6 +200,29 @@ try {
           const rect = node.getBoundingClientRect();
           return { width: Math.round(rect.width), height: Math.round(rect.height), top: Math.round(rect.top) };
         })(),
+        // Does a point inside the panel actually hit the panel? The app mounts a
+        // fixed root at z-index 1000; the panel's original 901 put it underneath, so
+        // the app's 24px left padding covered the first two dozen pixels of every line
+        // while getBoundingClientRect still reported the text inside the panel.
+        // elementFromPoint is the direct question: what does a click there reach?
+        hitTest: (() => {
+          const probe = (selector) => {
+            const node = panel.querySelector(selector);
+            if (node === null) return null;
+            const rect = node.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return { skipped: selector };
+            const x = Math.round(rect.left) + 2;
+            const y = Math.round(rect.top + rect.height / 2);
+            const hit = document.elementFromPoint(x, y);
+            return {
+              selector,
+              point: `${x},${y}`,
+              hit: hit === null ? null : `${hit.tagName.toLowerCase()}.${String(hit.className).slice(0, 28)}`,
+              insidePanel: hit !== null && hit.closest(".dshpb-panel") !== null,
+            };
+          };
+          return [probe(".dshpb-head"), probe(".dshpb-tablewrap")].filter((entry) => entry !== null);
+        })(),
       };
     });
 
@@ -207,7 +230,9 @@ try {
     for (const [key, value] of Object.entries(report)) {
       // Nested boxes are printed field by field; the default serialisation showed
       // them as [object Object], which hid the measurements this check exists for.
-      if (value !== null && typeof value === "object") {
+      if (Array.isArray(value)) {
+        console.log(`  ${key.padEnd(14)} ${value.map((entry) => JSON.stringify(entry)).join(" ")}`);
+      } else if (value !== null && typeof value === "object") {
         console.log(`  ${key.padEnd(14)} ${Object.entries(value).map(([k, v]) => `${k}=${v}`).join(" ")}`);
       } else {
         console.log(`  ${key.padEnd(14)} ${value}`);
@@ -258,6 +283,25 @@ try {
         if (box === null) continue;
         if (box.top < CHROME_H) {
           problems.push(`the ${name} control sits ${box.top}px from the top, inside the window's control strip (${CHROME_H}px)`);
+        }
+      }
+
+      // And a point inside the panel must actually reach the panel. This is the check
+      // that catches the app painting over it: the panel's original z-index of 901 sat
+      // below the app's fixed root at 1000, so the app's 24px left padding covered the
+      // first two dozen pixels of every line of text.
+      const hits = report.hitTest;
+      if (!Array.isArray(hits) || hits.length === 0) {
+        problems.push("could not test whether the panel receives clicks");
+      } else {
+        for (const hit of hits) {
+          if (hit.skipped !== undefined) {
+            problems.push(`${hit.skipped} has no box to test`);
+            continue;
+          }
+          if (hit.insidePanel !== true) {
+            problems.push(`a point inside the panel (${hit.point}) is covered: elementFromPoint returned ${hit.hit}`);
+          }
         }
       }
     }
