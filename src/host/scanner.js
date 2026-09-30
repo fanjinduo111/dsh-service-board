@@ -87,7 +87,14 @@ foreach($p in $procs){
   })
 }
 Write-Output '__MARKER_BEGIN__'
-$json = ConvertTo-Json -InputObject ([pscustomobject]@{ desc=@($desc); procs=$emit }) -Depth 4 -Compress
+# 完整父映射一并输出：判断"是否由服务控制管理器持有"需要走整条父链，而被过滤掉的
+# 中间进程不在 procs 里，光靠 procs 会把链走断。
+# 键必须是字符串：ConvertTo-Json 对整数键的哈希表直接报 NonStringKeyInDictionary。
+$parentOf=@{}
+foreach($p in $procs){ $parentOf[[string][int]$p.ProcessId]=[int]$p.ParentProcessId }
+$servicesPid=0
+foreach($p in $procs){ if($p.Name -eq 'services.exe'){ $servicesPid=[int]$p.ProcessId; break } }
+$json = ConvertTo-Json -InputObject ([pscustomobject]@{ desc=@($desc); procs=$emit; parents=$parentOf; servicesPid=$servicesPid }) -Depth 4 -Compress
 $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
 Write-Output ([System.Convert]::ToBase64String($bytes))
 Write-Output '__MARKER_END__'
@@ -180,6 +187,29 @@ export async function scanProcesses() {
   const desc = new Set(Array.isArray(data.desc) ? data.desc : [])
   const procs = Array.isArray(data.procs) ? data.procs : []
 
+  // Which processes the Service Control Manager owns.
+  //
+  // A Windows service (MySQL80, for one) is started by `services.exe`, and stopping
+  // its process does not stop the service: the SCM restarts it immediately. The panel
+  // used to offer a plain "停止" for such a process, so it looked like the service
+  // came back by itself. The whole chain is walked, not just the first link:
+  // `mysqld.exe` listens from a child whose parent is the process services.exe
+  // started directly.
+  const parentOf = data.parents !== null && typeof data.parents === 'object' ? data.parents : {}
+  const servicesPid = Number(data.servicesPid ?? 0)
+  /** True when `pid`'s ancestry passes through the service control manager. */
+  const ownedByServices = (pid) => {
+    if (!Number.isInteger(servicesPid) || servicesPid <= 4 || pid === undefined) return false
+    let cursor = pid
+    for (let hops = 0; hops < 16; hops += 1) {
+      const parent = Number(parentOf[String(cursor)] ?? parentOf[cursor] ?? 0)
+      if (!Number.isInteger(parent) || parent <= 4) return false
+      if (parent === servicesPid) return true
+      cursor = parent
+    }
+    return false
+  }
+
   const out = []
   for (const p of procs) {
     const inTree = !!p.inTree || desc.has(p.pid)
@@ -219,6 +249,8 @@ export async function scanProcesses() {
       inTree,
       ports,
       binds,
+      /** True for a Windows service: stopping it only makes the SCM restart it. */
+      serviceOwned: ownedByServices(p.pid),
     })
   }
   // 第二道：剔除进程链中间壳（无端口的启动器/包装器——npm-cli/cross-env/cmd 壳等）

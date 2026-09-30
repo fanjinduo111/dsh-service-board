@@ -552,6 +552,18 @@ function apply(ctx) {
       kb.disabled = true
       kb.textContent = '停止中…'
       c6.append(kb)
+    } else if (e.serviceOwned) {
+      // A Windows service cannot be stopped from here: the Service Control Manager
+      // owns it and restarts it immediately, which is exactly what "I closed it and
+      // it started itself again" was. Saying so plainly is better than offering a
+      // button that appears to work and then looks like a bug.
+      const note = document.createElement('button')
+      note.className = 'dshpb-btn dshpb-btn-service'
+      note.disabled = true
+      note.textContent = 'Windows 服务'
+      note.title = '由 Windows 服务管理器持有：结束进程后它会立即自动重启。要停止它请用「服务」管理器，或执行 net stop 服务名。'
+      c6.append(note)
+      if (e.logPath) c6.append(btn('日志', 'log', e, ''))
     } else {
       if (e.logPath) c6.append(btn('日志', 'log', e, ''))
       // A restart is offered only where it can actually succeed: the scanner must
@@ -774,6 +786,14 @@ function apply(ctx) {
       if (!data.ok) { bodyEl.textContent = `日志不可用：${data.error ?? res.status}/* A wildcard bind is worth distinguishing at a glance from a loopback one: the
    first is reachable from the network, the second is not. */
 .dshpb-port-any { border-style:dashed; }
+
+/* The action column: buttons keep their label on one line, and the column is wide
+   enough for the longest of them. "停止" wrapped onto two lines in a screenshot
+   because the cell had no room, which reads as a broken control. */
+.dshpb-table td:last-child { white-space:nowrap; min-width:150px; }
+.dshpb-btn { white-space:nowrap; }
+/* A service the SCM owns: the control explains itself instead of inviting a click. */
+.dshpb-btn-service { opacity:.75; cursor:default; }
 
 /* --- the filter panel -------------------------------------------------------
    The panel listed every listening process on the machine, so the useful rows were

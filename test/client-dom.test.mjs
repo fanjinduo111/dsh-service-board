@@ -76,8 +76,8 @@ window.fetch = async (url, options) => {
             inTree: true,
           },
           {
-            // A service whose command line cannot be read (a Windows service runs
-            // under another account): no restart can be offered for it.
+            // A Windows service: the SCM owns it and restarts it if killed, so the
+            // panel must not offer a stop that would look broken.
             pid: 7301,
             name: "mysqld.exe",
             cmd: "",
@@ -89,6 +89,7 @@ window.fetch = async (url, options) => {
             sessionTitle: null,
             logPath: null,
             inTree: false,
+            serviceOwned: true,
           },
         ],
       }),
@@ -225,6 +226,22 @@ if (entry !== null) {
     if (noCommandRow !== undefined && noCommandRow.textContent.includes("重启")) {
       problems.push("a service with no readable command line must not offer 重启");
     }
+    // A service the Service Control Manager owns must not offer a stop: killing it
+    // only makes Windows start it again, which the user rightly read as a bug.
+    if (noCommandRow !== undefined) {
+      const serviceActionLabels = [...noCommandRow.querySelectorAll(".dshpb-btn")].map((b) => b.textContent);
+      console.log(`service row    : ${JSON.stringify(serviceActionLabels)}`);
+      if (serviceActionLabels.includes("停止")) {
+        problems.push("a Windows-service row must not offer 停止");
+      }
+      if (!serviceActionLabels.some((label) => label.includes("Windows 服务"))) {
+        problems.push("a Windows-service row should say why it cannot be stopped here");
+      }
+      const note = noCommandRow.querySelector(".dshpb-btn-service");
+      if (note !== null && !/自动重启|服务管理器/.test(note.getAttribute("title") ?? "")) {
+        problems.push("the service note should explain that Windows restarts it");
+      }
+    }
 
     // A state request must have been issued, so the panel is not merely visible.
     const stateRequests = requests.filter((request) => request.url.includes("/state"));
@@ -244,6 +261,24 @@ if (entry !== null) {
   }
 
   const panel = document.querySelector(".dshpb-panel");
+
+  // Every control the header markup declares must reach the DOM. A screenshot
+  // showed a header with no buttons visible at all, so this states the expectation
+  // instead of trusting the template string.
+  const headerControls = {
+    filter: panel === null ? null : panel.querySelector(".dshpb-cfgtoggle"),
+    collapse: panel === null ? null : panel.querySelector(".dshpb-close:not(.dshpb-log-close)"),
+    fullscreen: panel === null ? null : panel.querySelector(".dshpb-panel-max"),
+  };
+  console.log(`header controls: ${Object.entries(headerControls).map(([key, node]) => `${key}=${node === null ? "MISSING" : "ok"}`).join(" ")}`);
+  if (headerControls.filter === null) problems.push("the header has no filter control");
+  else {
+    if (!/筛选/.test(headerControls.filter.textContent)) problems.push("the filter control should read 筛选");
+    const filterStyle = window.getComputedStyle(headerControls.filter);
+    console.log(`filter shown   : display=${filterStyle.display}`);
+    if (filterStyle.display === "none") problems.push("the filter control must be visible");
+  }
+
   const closeButton = panel === null ? null : panel.querySelector(".dshpb-close:not(.dshpb-log-close)");
   const closeLabel = closeButton === null ? "" : closeButton.textContent.trim();
   console.log(`close control  : "${closeLabel}" aria-label=${closeButton?.getAttribute("aria-label")}`);
