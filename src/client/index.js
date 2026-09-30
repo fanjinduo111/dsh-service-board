@@ -49,9 +49,22 @@ table.dshpb-table { border-collapse:collapse; width:100%; font-size:13px; }
 .dshpb-st-running { color:#4ade80; } .dshpb-st-pid-alive { color:#e0a052; } .dshpb-st-stopping { color:#e0a052; } .dshpb-st-stopped { color:#8b93a1; }
 .dshpb-code { font-family:Consolas,Menlo,monospace; font-size:12px; color:#c9d1d9; }
 .dshpb-http-ok { color:#4ade80; font-weight:600; } .dshpb-http-dead { color:#e05252; font-weight:600; }
-.dshpb-port { display:inline-block; background:rgba(63,146,254,.15); color:#5ba4ff; border-radius:4px; padding:1px 7px; font-family:Consolas,monospace; font-size:12px; margin-right:4px; }
+/* The port column holds one tag per listening socket, and each tag carries its
+   address. Two of those plus the action column do not fit on one line at a modest
+   panel width: the column grew and pushed PID and 操作 out of the panel entirely.
+   The wrapper must be inline-flex, not a plain span: flex-wrap does nothing on an
+   inline element, so the tags stayed on one line and the column stayed wide. */
+.dshpb-portcell { display:inline-flex; flex-wrap:wrap; gap:3px 4px; max-width:100%; }
+.dshpb-port { display:inline-block; background:rgba(63,146,254,.15); color:#5ba4ff; border-radius:4px; padding:1px 6px; font-family:Consolas,monospace; font-size:11px; white-space:nowrap; }
 .dshpb-svcname { font-weight:600; }
-.dshpb-svccmd { display:block; color:#8b93a1; font-size:11px; font-family:Consolas,monospace; max-width:380px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:2px; }
+/* The service column: the name, with the command line as a dim preview under it.
+   The preview is capped tightly on purpose. It was allowed 380px, and the column then
+   grew to whatever the preview asked for — at a 700px panel that alone pushed the table
+   47px past the panel's right edge and hid the action column. The name is what
+   identifies the row; the preview is a hint. */
+.dshpb-table td:first-child { max-width:210px; }
+.dshpb-table td:first-child > * { max-width:100%; }
+.dshpb-svccmd { display:block; color:#8b93a1; font-size:11px; font-family:Consolas,monospace; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:2px; }
 .dshpb-btn { border:1px solid rgba(127,127,127,.4); background:transparent; color:#c9d1d9; font-size:12px; padding:3px 11px; border-radius:4px; cursor:pointer; margin-right:6px; }
 .dshpb-btn:hover:not(:disabled) { background:rgba(127,127,127,.15); }
 .dshpb-btn:disabled { opacity:.45; cursor:default; }
@@ -262,10 +275,10 @@ body.dshpb-docked .dshpb-close.dshpb-collapse:hover {
    an earlier dashed rule drew a box around every port tag instead of a subtle hint. */
 .dshpb-port-any { border:0; background:rgba(127,127,127,.18); color:var(--dsw-alias-label-primary,#c9d1d9); }
 
-/* The action column: buttons keep their label on one line, and the column is wide
-   enough for the longest of them. "停止" wrapped onto two lines in a screenshot
-   because the cell had no room, which reads as a broken control. */
-.dshpb-table td:last-child { white-space:nowrap; min-width:150px; }
+/* The action column: buttons keep their label on one line. 142px is the measured width
+   three buttons need at the compact size, so this is a floor the table can honour at
+   every width the drag handle allows instead of a preference it can squeeze away. */
+.dshpb-table td:last-child { white-space:nowrap; min-width:142px; }
 .dshpb-btn { white-space:nowrap; }
 /* Column labels and short status words must never break mid-word. At a narrow panel
    width the two-character 状态 header wrapped onto two lines — one character per
@@ -321,6 +334,59 @@ body.dshpb-docked .dshpb-close.dshpb-collapse:hover {
 .dshpb-cfgpath { margin:12px 0 0; padding-top:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   font-size:10px; color:var(--dsw-alias-label-dimmed,#767e8c);
   border-top:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.16)); }
+
+/* Six columns do not fit on one line in a narrow column, and letting the table grow
+   pushed 操作 — the column of buttons that makes the panel worth opening — outside the
+   panel edge. The secondary columns give way instead, and so do the fixed widths that
+   were sized for a wide panel.
+   These are container queries, not media queries: they measure the panel, so they
+   follow the drag handle rather than the window. HTTP goes first, because the state
+   dot already answers whether the service responds. */
+body.dshpb-docked .dshpb-panel { container-type:inline-size; }
+@container (max-width: 780px) {
+  .dshpb-table th:nth-child(5), .dshpb-table td:nth-child(5) { display:none; }
+}
+@container (max-width: 640px) {
+  .dshpb-table th:nth-child(4), .dshpb-table td:nth-child(4) { display:none; }
+  /* The command preview is the widest fixed thing in the row. */
+  .dshpb-svccmd { max-width:150px; }
+  .dshpb-table td:first-child { max-width:170px; }
+}
+@container (max-width: 560px) {
+  .dshpb-svccmd { max-width:120px; }
+  .dshpb-table td:first-child { max-width:140px; }
+  .dshpb-tablewrap { padding-left:10px; padding-right:10px; }
+  .dshpb-grouprow td { padding-left:6px; }
+}
+@container (max-width: 460px) {
+  .dshpb-svccmd { max-width:90px; }
+  .dshpb-table td:first-child { max-width:110px; }
+  .dshpb-table td:last-child { min-width:0; }
+  .dshpb-table th, .dshpb-table td { padding:8px 5px; }
+  /* The wrapper's padding is part of the budget here: at 380px the horizontal padding
+     alone was enough to make it scroll by two pixels. */
+  .dshpb-tablewrap { padding-left:6px; padding-right:6px; }
+  .dshpb-portcell { gap:2px 3px; }
+  .dshpb-btn { padding:3px 8px; margin-right:4px; font-size:11px; }
+  .dshpb-port { font-size:10px; padding:1px 5px; }
+  /* At the narrowest widths the auto algorithm's minimum content width exceeds the
+     panel, and the table overflows no matter how small the caps are. Fixed layout
+     trades content-sized columns for declared ones, which is the only way to
+     guarantee the action column stays inside. Percentages follow the visible columns:
+     the hidden HTTP and PID columns still occupy a slot. */
+  .dshpb-table { table-layout:fixed; width:100%; max-width:100%; box-sizing:border-box; }
+  /* Zero-minimum cells: at this width a cell's minimum content width is itself enough
+     to make the wrapper scroll, even with the table at 100%. */
+  .dshpb-table td, .dshpb-table th { min-width:0; }
+  .dshpb-table th:nth-child(1), .dshpb-table td:nth-child(1) { width:26%; }
+  .dshpb-table th:nth-child(2), .dshpb-table td:nth-child(2) { width:15%; }
+  .dshpb-table th:nth-child(3), .dshpb-table td:nth-child(3) { width:23%; }
+  .dshpb-table th:nth-child(4), .dshpb-table td:nth-child(4) { width:0; }
+  .dshpb-table th:nth-child(5), .dshpb-table td:nth-child(5) { width:0; }
+  .dshpb-table th:last-child, .dshpb-table td:last-child { width:36%; }
+  .dshpb-table td:first-child, .dshpb-svccmd { max-width:none; overflow:hidden; }
+  .dshpb-portcell { max-width:100%; overflow:hidden; }
+}
 `
 
 function apply(ctx) {
@@ -496,7 +562,7 @@ function apply(ctx) {
       <p class="dshpb-cfgpath" title="${escapeAttr(configPath)}">配置文件：${escapeHtml(configPath)}</p>`
   }
   /** The narrowest and widest the panel may be dragged, in pixels. */
-  const MIN_DOCK = 300
+  const MIN_DOCK = 360
   const MAX_DOCK_MAX = 1000
   /**
    * The docked width.
@@ -788,7 +854,7 @@ function apply(ctx) {
       ? e.binds
       : (e.ports ?? []).map((port) => ({ addr: '', port }))
     if (binds.length === 0) return '<span class="dshpb-code" style="color:#6b7280">—</span>'
-    return binds.map((bind) => {
+    const tags = binds.map((bind) => {
       const wildcard = bind.addr === '0.0.0.0' || bind.addr === '::' || bind.addr === ''
       const label = wildcard ? `0.0.0.0:${bind.port}` : `${bind.addr}:${bind.port}`
       const title = wildcard
@@ -796,6 +862,9 @@ function apply(ctx) {
         : `${bind.addr}:${bind.port} — 仅该地址可访问`
       return `<span class="dshpb-port${wildcard ? ' dshpb-port-any' : ''}" title="${escapeAttr(title)}">${escapeHtml(label)}</span>`
     }).join('')
+    // One wrapper per cell, so several tags wrap inside the cell instead of widening
+    // the column past the panel's edge.
+    return `<span class="dshpb-portcell">${tags}</span>`
   }
 
   function row(e) {

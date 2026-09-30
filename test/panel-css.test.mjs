@@ -47,23 +47,64 @@ assert.ok(!css.includes("${"), "the extracted sheet contains no template interpo
 assert.ok(!/\bfunction\s+\w+\s*\(/.test(css), "the extracted sheet contains no JavaScript function");
 
 /**
- * Every `selector { declarations }` rule, in document order.
+ * Every `selector { declarations }` rule, in document order, with the conditional
+ * group it sits inside (if any) reported as `condition`.
  *
- * Comments are stripped first: a `{` inside a comment would otherwise be read as
- * the start of a declaration block and desynchronise the whole scan.
+ * Comments are stripped first: a `{` inside a comment would otherwise be read as the
+ * start of a declaration block and desynchronise the scan.
+ *
+ * This walks the sheet with a brace-depth stack rather than matching
+ * `([^{}]+)\{([^{}]*)\}`. That regex looks equivalent and is not: where `@media … {`
+ * appears, the pattern fails at the at-rule's own brace, backtracks, and restarts just
+ * after it, so the at-rule prelude is silently dropped and every inner rule is reported
+ * as unconditional. The panel's narrow-width rules were invisible to every assertion
+ * because of exactly that — the same class of silence that let a broken stylesheet pass
+ * earlier, so the next assertion that depends on nesting is tested against a fixture in
+ * `parser-fixture.test.mjs`.
  */
 function rules(text) {
   const withoutComments = text.replace(/\/\*[\s\S]*?\*\//g, "");
   const found = [];
-  const pattern = /([^{}]+)\{([^{}]*)\}/g;
-  let match;
-  while ((match = pattern.exec(withoutComments)) !== null) {
-    found.push({
-      selector: match[1].trim().replace(/\s+/g, " "),
-      body: match[2].replace(/\s+/g, " ").trim(),
-    });
+  /** Conditional-group preludes currently open, outermost first. */
+  const conditions = [];
+  /** One entry per open block: { kind: "at" | "rule", rule? }. */
+  const blocks = [];
+  let selector = "";
+  let mode = "selector";
+
+  for (const char of withoutComments) {
+    if (mode === "selector") {
+      if (char === "{") {
+        const prelude = selector.trim().replace(/\s+/g, " ");
+        selector = "";
+        if (prelude.startsWith("@")) {
+          conditions.push(prelude);
+          blocks.push({ kind: "at" });
+        } else {
+          const rule = { selector: prelude, body: "", condition: conditions.at(-1) ?? null };
+          found.push(rule);
+          blocks.push({ kind: "rule", rule });
+          mode = "body";
+        }
+        continue;
+      }
+      if (char === "}") { blocks.pop(); if (conditions.length > blocks.filter((b) => b.kind === "at").length) conditions.pop(); continue; }
+      selector += char;
+      continue;
+    }
+    // Reading a declaration block.
+    if (char === "}") {
+      blocks.pop();
+      mode = "selector";
+      continue;
+    }
+    blocks.at(-1).rule.body += char;
   }
-  return found;
+  return found.map((rule) => ({
+    selector: rule.selector,
+    body: rule.body.replace(/\s+/g, " ").trim(),
+    condition: rule.condition,
+  }));
 }
 const all = rules(css);
 assert.ok(all.length > 20, `the stylesheet parses into rules (found ${all.length})`);
@@ -132,18 +173,47 @@ assert.ok(
   "the docked dialog fills the width the script reserved",
 );
 // The strip the dialog leaves free is painted, or the column would appear to start
-// mid-air instead of at the window edge.
-const dockedPanelRule = all
-  .filter((rule) => /^body\.dshpb-docked\s+\.dshpb-panel$/.test(rule.selector.trim()))
-  .at(-1);
-assert.ok(dockedPanelRule !== undefined, "the docked panel has its own rule");
+// mid-air instead of at the window edge. The declarations may be spread across several
+// rules for the same selector, so every one of them is consulted rather than the last:
+// taking only the last broke the moment a second rule for this selector was added.
+const dockedPanelRules = all.filter((rule) => /^body\.dshpb-docked\s+\.dshpb-panel$/.test(rule.selector.trim()));
+assert.ok(dockedPanelRules.length > 0, "the docked panel has its own rule");
+const dockedPanelBody = dockedPanelRules.map((rule) => rule.body).join(" ");
 assert.ok(
-  /background:/.test(dockedPanelRule.body),
+  /background:/.test(dockedPanelBody),
   "the docked panel paints the strip left free above the dialog",
 );
 assert.ok(
-  /top:\s*0/.test(dockedPanelRule.body) && /height:\s*100vh/.test(dockedPanelRule.body),
+  /top:\s*0/.test(dockedPanelBody) && /height:\s*100vh/.test(dockedPanelBody),
   "the docked panel is pinned to the viewport, not left to the base rule's inset shorthand",
+);
+
+// --- the table must never push 操作 out of the panel --------------------------
+
+// Six columns do not fit in a narrow column; the secondary ones give way by panel
+// width, so the column of buttons stays reachable at every width the drag handle allows.
+const narrowRules = all.filter((rule) => rule.condition !== null && /@container/.test(rule.condition));
+assert.ok(
+  narrowRules.length >= 3,
+  `the panel declares container-query rules for narrow widths (found ${narrowRules.length}); `
+  + `at-rule selectors seen: ${JSON.stringify(all.map((r) => r.selector).filter((s) => s.includes("@")).slice(0, 6))}; `
+  + `nth-child selectors seen: ${JSON.stringify(all.map((r) => r.selector).filter((s) => s.includes("nth-child")).slice(0, 6))}; `
+  + `extracted sheet contains @container: ${css.includes("@container")}; `
+  + `tail of the extracted sheet: ${JSON.stringify(css.slice(-320))}`,
+);
+assert.ok(
+  /container-type:\s*inline-size/.test(dockedPanelBody),
+  "the panel is a size container, so the queries follow the drag handle and not the window",
+);
+const hiddenColumns = narrowRules.filter((rule) => /nth-child\([45]\)/.test(rule.selector) && /display:\s*none/.test(rule.body));
+assert.ok(
+  hiddenColumns.length >= 2,
+  `HTTP and PID are hidden at narrow widths (found ${hiddenColumns.length} rules)`,
+);
+// And the queries must actually be scoped to widths, not to some other feature.
+assert.ok(
+  narrowRules.every((rule) => /max-width:\s*\d+px/.test(rule.condition)),
+  `every container query states a width: ${JSON.stringify(narrowRules.map((r) => r.condition))}`,
 );
 
 // The app must make room rather than be covered, so the patch has to inset the
@@ -234,10 +304,19 @@ for (const rule of all.filter((entry) => entry.selector.includes("dshpb-port")))
 // At a narrow panel width the two-character 状态 header wrapped onto two lines. The
 // column labels and short status words now stay on one line, and the panel is
 // resizable so the user can give the table the room it needs.
+//
+// Every rule for the selector is considered, not only the last: a later rule may set
+// something else entirely (a container query changing padding, for one), and reading
+// only the last would then report a missing declaration that is present.
 for (const selector of [".dshpb-table th", ".dshpb-table td"]) {
-  const rule = lastRule(selector);
-  assert.ok(rule !== undefined, `${selector} has a rule`);
-  assert.ok(/white-space:\s*nowrap/.test(rule.body), `${selector} must not break mid-word`);
+  const bodies = all
+    .filter((rule) => rule.selector.split(",").map((part) => part.trim()).includes(selector))
+    .map((rule) => rule.body);
+  assert.ok(bodies.length > 0, `${selector} has a rule`);
+  assert.ok(
+    bodies.some((body) => /white-space:\s*nowrap/.test(body)),
+    `${selector} must not break mid-word; bodies: ${JSON.stringify(bodies)}`,
+  );
 }
 assert.ok(
   lastRule(".dshpb-grip") !== undefined,

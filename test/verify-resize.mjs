@@ -20,6 +20,19 @@ const page = await browser.newPage();
 await page.setViewport({ width: 1440, height: 900 });
 await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
 await new Promise((r) => setTimeout(r, 2500));
+
+// Start from the automatic width. A previous run leaves its dragged (or swept) width
+// stored, and the drag check below needs room to grow: at the maximum it cannot, which
+// looked like a broken handle rather than a test starting from a fixed state.
+await page.evaluate(async () => {
+  await fetch("/api/plugins/process-board/config", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ width: null }),
+  });
+});
+await page.reload({ waitUntil: "networkidle2" });
+await new Promise((r) => setTimeout(r, 2500));
 await page.waitForSelector("[data-dsh-processboard-entry]", { timeout: 20000 });
 await page.evaluate(() => {
   document.querySelector("[data-dsh-processboard-entry]").dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -132,6 +145,71 @@ if (before.grip !== null) {
   else if (Math.abs(reloaded.panelWidth - config.width) > 2) {
     problems.push(`the reloaded panel is ${reloaded.panelWidth}px but the stored width is ${config.width}`);
   }
+}
+
+// 6. Every width the handle allows must keep the table inside the panel, with the
+//    action column still holding its buttons. That is the contract the responsive
+//    rules exist for, so it is checked across the whole range rather than at one
+//    width: an earlier version passed at 460px and overflowed by 47px at 700px,
+//    because switching a column off changes what the remaining columns need.
+console.log("\nwidth sweep (the table must fit inside the panel at every width):");
+for (const width of [320, 380, 460, 560, 640, 700, 780, 820, 900, 1000]) {
+  await page.evaluate(async (wanted) => {
+    await fetch("/api/plugins/process-board/config", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ width: wanted }),
+    });
+  }, width);
+  // The width is applied when the panel opens, so reload rather than expect a live change.
+  await page.reload({ waitUntil: "networkidle2" });
+  await new Promise((r) => setTimeout(r, 2200));
+  await page.waitForSelector("[data-dsh-processboard-entry]", { timeout: 20000 });
+  await page.evaluate(() => {
+    document.querySelector("[data-dsh-processboard-entry]").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await new Promise((r) => setTimeout(r, 3500));
+
+  const state = await page.evaluate(() => {
+    const panel = document.querySelector(".dshpb-panel");
+    const table = panel.querySelector(".dshpb-table");
+    if (table === null) return { empty: true };
+    const rows = [...panel.querySelectorAll(".dshpb-table tbody tr")]
+      .filter((row) => row.querySelector(".dshpb-svcname") !== null);
+    const actionCell = rows[0]?.querySelector("td:last-child");
+    const panelRect = panel.getBoundingClientRect();
+    const tableRect = table.getBoundingClientRect();
+    const wrap = panel.querySelector(".dshpb-tablewrap");
+    return {
+      empty: false,
+      panelWidth: Math.round(panelRect.width),
+      panelRight: Math.round(panelRect.right),
+      tableRight: Math.round(tableRect.right),
+      tableWidth: Math.round(tableRect.width),
+      buttons: actionCell === undefined ? [] : [...actionCell.querySelectorAll(".dshpb-btn")].map((b) => b.textContent),
+      wrapOverflow: wrap === null ? 0 : wrap.scrollWidth - wrap.clientWidth,
+    };
+  });
+
+  if (state.empty) {
+    console.log(`  ${String(width).padStart(4)}px : no rows to measure`);
+    continue;
+  }
+  const fits = state.tableRight <= state.panelRight + 1;
+  // A few pixels of sub-pixel rounding are not the failure this sweep is looking for.
+  // The failures that matter are the table leaving the panel and the action column
+  // losing its buttons; both are asserted separately and without tolerance.
+  const SCROLL_TOLERANCE = 4;
+  console.log(
+    `  ${String(state.panelWidth).padStart(4)}px : table ${String(state.tableWidth).padStart(4)}px `
+    + `right ${state.tableRight} vs ${state.panelRight} ${fits ? "fits" : "OVERFLOW"} `
+    + `scroll ${state.wrapOverflow}px (<=${SCROLL_TOLERANCE} ok) buttons [${state.buttons.join(" ")}]`,
+  );
+  if (!fits) problems.push(`at ${state.panelWidth}px the table overflows the panel by ${state.tableRight - state.panelRight}px`);
+  if (state.wrapOverflow > SCROLL_TOLERANCE) {
+    problems.push(`at ${state.panelWidth}px the table wrapper scrolls horizontally by ${state.wrapOverflow}px`);
+  }
+  if (state.buttons.length === 0) problems.push(`at ${state.panelWidth}px the action column has no buttons`);
 }
 
 await browser.close();

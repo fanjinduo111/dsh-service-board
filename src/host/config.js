@@ -39,8 +39,10 @@ export const DEFAULT_CONFIG = {
   width: null,
 }
 
-/** 面板宽度的合理区间，与客户端 MIN_DOCK / MAX_DOCK_MAX 保持一致。 */
-const MIN_WIDTH = 300
+/** 面板宽度的合理区间，与客户端 MIN_DOCK / MAX_DOCK_MAX 保持一致。
+ *  下限 360：六列（服务/状态/端口/HTTP/PID/操作）在更窄的宽度下装不下，
+ *  横向滚动会盖住操作列——面板存在的意义就是那一列按钮。 */
+const MIN_WIDTH = 360
 const MAX_WIDTH = 1000
 
 /** 一个值是否像面板宽度。 */
