@@ -1,1 +1,1 @@
-{"name":"dsh-process-board-patches","private":true,"type":"module","dependencies":{"jsdom":"^30.1.1"}}
+{"name":"dsh-process-board-patches","private":true,"type":"module","dependencies":{"jsdom":"^30.1.1","puppeteer-core":"^25.12.0"}}

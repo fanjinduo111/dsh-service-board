@@ -171,6 +171,36 @@ template literal: a single backtick written in a CSS comment terminates the stri
 and the whole client half disappears from the UI. That mistake was made twice
 while writing this patch, so it is now a test.
 
+### Checking the real interface
+
+`client-dom.test.mjs` runs the bundle against a fake DOM, which cannot tell you
+whether the plugin renders inside the running application. `browser-check.mjs` loads
+a real DSH instance in real Chromium, clicks the sidebar entry, and reports what the
+panel actually contains:
+
+```sh
+# Boot a profile that is NOT owned by the desktop application. Before trusting the
+# run, confirm which copy the profile holds:
+#   Select-String <profile>/node_modules/dsh-process-board/src/client/index.js -Pattern dshpb-cfgtoggle
+dsh --profile <profile> --port 19410 --no-open
+node test/browser-check.mjs "http://127.0.0.1:19410/?token=<token printed by that line>"
+```
+
+It fails when the sidebar entry never appears, when the panel does not open, when it
+is not a docked column, when the app does not reserve space for it, or when a header
+control is missing — and it prints the console errors and failed requests that
+explain why.
+
+Two things it taught, both the hard way:
+
+- **The `desktop` profile cannot be booted this way**; the Electron application owns
+  it. Clone its `package.json`, then copy its `node_modules/dsh-process-board` across
+  to check the same bytes.
+- **`pnpm install` replaces `node_modules/dsh-process-board` with the published
+  package**, discarding every patch here. The first `browser-check` run reported the
+  *published* plugin's behaviour, which read as "the patch does not render" for
+  several rounds. The check now prints which copy it found before judging it.
+
 ## Reverting
 
 ```sh
