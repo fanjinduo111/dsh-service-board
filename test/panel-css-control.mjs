@@ -37,6 +37,8 @@ try {
     ["the log is a band with its own height", /\.dshpb-log-col\.dshpb-log-on\s*\{[^}]*height:\s*clamp\(/],
     ["the source row is marked", /tr\.dshpb-logging/],
     ["the fullscreen toggle is hidden", /\.dshpb-panel-max[^{]*\{[^}]*display:\s*none/],
+    ["the log surface uses the app's code-surface token", /--dsw-alias-markdown-code-block/],
+    ["the log timestamp is dimmed", /\.dshpb-log-time\s*\{/],
   ];
   const problems = [];
   for (const [name, pattern] of absent) {
@@ -65,6 +67,22 @@ try {
   const publishedDialogColumn = /\.dshpb-dialog\s*\{[^}]*display:\s*flex;\s*flex-direction:\s*column/.test(stripped);
   console.log(`${publishedDialogColumn ? "PRESENT" : "absent "}  the published dialog's flex column`);
   if (!publishedDialogColumn) problems.push("the published dialog is not a flex column, so the regression this patch repairs did not exist");
+
+  // The report this patch answers was "the log is all pure black, I cannot make anything
+  // out", in the light theme. The whole theme-token layer is this repository's: the
+  // published sheet paints literal colours only. That is what makes the invented name
+  // ours to answer for - the app defines bg-layer-1/2/3 and never bg-l2, so the log's
+  // background stayed the dark literal while its text colour, which did resolve,
+  // followed the theme into near-black.
+  const publishedAliasTokens = [...new Set([...stripped.matchAll(/--dsw-alias-[a-z0-9-]+/g)].map((match) => match[0]))];
+  console.log(`${publishedAliasTokens.length === 0 ? "absent " : "PRESENT"}  the published theme-token layer (${publishedAliasTokens.length} tokens)`);
+  if (publishedAliasTokens.length > 0) {
+    problems.push(`the published sheet already names ${publishedAliasTokens.length} theme tokens, so "this token layer is the patch's" is wrong`);
+  }
+
+  const publishedLiteralLog = /\.dshpb-log-body\s*\{[^}]*background:\s*#16181f/.test(stripped);
+  console.log(`${publishedLiteralLog ? "PRESENT" : "absent "}  the published log surface as a bare dark literal`);
+  if (!publishedLiteralLog) problems.push("the published log surface is not a bare dark literal, so the tokenisation this patch repairs did not start from one");
 
   if (problems.length > 0) {
     console.error("\nFAILED:");

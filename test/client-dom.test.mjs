@@ -99,7 +99,9 @@ window.fetch = async (url, options) => {
     return {
       ok: true,
       status: 200,
-      json: async () => ({ ok: true, lines: ["line one", "ERROR boom", "WARN careful"] }),
+      // Two shapes on purpose: lines with a leading timestamp (which the client splits
+      // out so it can be dimmed) and one without, which must keep every character.
+      json: async () => ({ ok: true, lines: ["[2026-01-01 00:00:01] line one", "[2026-01-01 00:00:02] ERROR boom", "WARN careful"] }),
     };
   }
   return { ok: false, status: 404, json: async () => ({}) };
@@ -317,6 +319,20 @@ if (entry !== null && document.querySelector(".dshpb-panel") !== null) {
       problems.push(`the log rendered ${logBody.querySelectorAll("div").length} lines, expected 3`);
     }
     if (!/dshpb-logline-err/.test(logBody.innerHTML)) problems.push("an ERROR line is not highlighted");
+
+    // The timestamp is split out so it can be dimmed against the message. Two things have
+    // to hold: the split happens only for a line that really starts with one, and the
+    // concatenated line still reads exactly as the host sent it, so no log text is ever
+    // reformatted or dropped.
+    const renderedLines = [...logBody.querySelectorAll("div")];
+    const stamped = renderedLines.filter((line) => line.querySelector(".dshpb-log-time") !== null);
+    if (stamped.length !== 2) problems.push(`${stamped.length} of 3 lines carry a timestamp span, expected 2`);
+    if (stamped[0]?.querySelector(".dshpb-log-time")?.textContent !== "[2026-01-01 00:00:01] ") {
+      problems.push(`the timestamp span holds the wrong text: ${JSON.stringify(stamped[0]?.querySelector(".dshpb-log-time")?.textContent)}`);
+    }
+    const roundTrip = renderedLines.map((line) => line.textContent).join("\n");
+    const original = "[2026-01-01 00:00:01] line one\n[2026-01-01 00:00:02] ERROR boom\nWARN careful";
+    if (roundTrip !== original) problems.push(`the rendered log does not read as it arrived:\n${JSON.stringify(roundTrip)}`);
     if (markedRows().length !== 1 || markedRows()[0].querySelector(".dshpb-svcname").textContent !== "node.exe") {
       problems.push(`the wrong row is marked as the log's source: ${markedRows().map((tr) => tr.textContent.slice(0, 24)).join(" / ")}`);
     }

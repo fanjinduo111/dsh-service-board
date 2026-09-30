@@ -319,6 +319,47 @@ assert.ok(
   /overflow:\s*auto/.test(logBodyRule.body),
   `the log body scrolls inside the band (found: ${logBodyRule.body})`,
 );
+
+// --- the sheet may only name theme tokens the application defines -------------
+
+// The log came out near-black on near-black in the light theme, and not one rule here
+// was wrong by itself: the background named a token the application does not define
+// (--dsw-alias-bg-l2; it defines bg-layer-1/2/3), so the background was always the dark
+// fallback, while the text colour named a token that does exist and therefore followed
+// the theme. A var() with a missing name is not an error anywhere and the fallback hides
+// it completely in whichever theme it was written for, so the only authority on "does
+// this name resolve" is the application's own sheet. That answer is a fixture, taken
+// from the installed DSH; panel-css-control.mjs pins the published sheet to the tokens
+// this replaces.
+const fixtureFile = resolve(import.meta.dirname, "fixtures/dsh-theme-tokens.json");
+const themeTokens = new Set(JSON.parse(await readFile(fixtureFile, "utf8")).tokens);
+
+const namedTokens = [...new Set([...css.matchAll(/var\((--dsw-alias-[a-z0-9-]+)/g)].map((match) => match[1]))];
+const dangling = namedTokens.filter((token) => !themeTokens.has(token));
+assert.equal(
+  dangling.length,
+  0,
+  `every theme token in the sheet must exist in the app's theme; dangling: ${dangling.join(", ")}`,
+);
+
+// The two colours have to come from the same rule and both from the theme: split across
+// a base rule and a docked override is exactly how they drifted apart.
+assert.ok(
+  /background:\s*var\(--dsw-alias-/.test(logBodyRule.body) && /color:\s*var\(--dsw-alias-/.test(logBodyRule.body),
+  `the log surface takes its background and its text colour from the theme (found: ${logBodyRule.body})`,
+);
+assert.ok(
+  /background:\s*var\(--dsw-alias-markdown-code-block/.test(logBodyRule.body),
+  `the log surface uses the application's own code-surface token (found: ${logBodyRule.body})`,
+);
+// And the timestamp is the one part of a line that is always the same shape, so it is
+// the part that gets pushed back for the message to read.
+const logTimeRule = lastRule(".dshpb-log-time");
+assert.ok(logTimeRule !== undefined, "the log timestamp has a rule of its own");
+assert.ok(
+  /color:\s*var\(--dsw-alias-label-tertiary/.test(logTimeRule.body),
+  `the timestamp is dimmed with the theme's tertiary label (found: ${logTimeRule.body})`,
+);
 // 日志全屏 still means the band takes the panel, so the clamp has to be released.
 const logMaxRule = lastRule(".dshpb-layout.dshpb-log-max .dshpb-log-col");
 assert.ok(
@@ -405,6 +446,8 @@ console.log(`dialog docked    : ${dialogRule.body}`);
 console.log(`mask disabled    : ${maskDisabled}`);
 console.log(`layout           : ${layoutRule.body}`);
 console.log(`log band         : ${logOnRule.body}`);
+console.log(`log surface      : ${logBodyRule.body}`);
+console.log(`theme tokens     : ${namedTokens.length} named, ${dangling.length} dangling`);
 console.log("\npanel css tests passed");
 
 // Nothing here keeps the loop alive, but be explicit for symmetry with the

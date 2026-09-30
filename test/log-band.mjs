@@ -16,6 +16,14 @@
  * No DSH instance is needed: the bundle registers with `window.__ModuleLoader__`,
  * which this page provides, and every request it makes is answered by a stub.
  *
+ * It also has to carry the application's theme. The sheet reaches most of its colours
+ * through var(--dsw-alias-…), and a page with none of those defined exercises every
+ * fallback instead: that is how a log whose background was an invented token name came
+ * out readable here (dark fallback, light fallback text) while the user saw near-black
+ * on near-black in the light theme. The style block below is the application's own
+ * theme, resolved through its var() chain, and the last section measures contrast in
+ * both themes rather than assuming either one.
+ *
  * Usage: node test/log-band.mjs [client-file]
  *
  * Where Chrome cannot be spawned from here (a sandbox that forbids piped stdio
@@ -51,7 +59,47 @@ page.on("pageerror", (error) => problems.push(`the page threw: ${error.message}`
 // A sidebar shaped like the real one plus the app root the dock insets, and a stub
 // API: /state lists the services, /log returns 400 long lines for whichever pid is
 // asked for, /config reports the defaults.
-await page.setContent(`<!doctype html><html><head><meta charset="utf-8"></head><body>
+await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>
+  /* The application's own theme, taken from the installed sheet
+     (resources/app.asar -> lib/welcome/welcome.css, whose light block is "body" and
+     whose dark block is "body[data-ds-dark-theme]") and resolved there through each
+     alias's var() chain down to the literal colour. Only the tokens this plugin names
+     are listed. Without this block every var() below falls back to the dark literals
+     the sheet was written with, so the harness would be testing the one theme where the
+     reported black-on-black log cannot happen. */
+  body {
+    --dsw-alias-bg-base: rgb(255, 255, 255);
+    --dsw-alias-border-l1: rgba(0, 0, 0, .04);
+    --dsw-alias-border-l2: rgba(0, 0, 0, .1);
+    --dsw-alias-border-l3: rgba(0, 0, 0, .12);
+    --dsw-alias-brand-primary: rgb(15, 17, 21);
+    --dsw-alias-brand-text: rgb(15, 17, 21);
+    --dsw-alias-interactive-bg-hover: rgba(38, 49, 72, .06);
+    --dsw-alias-interactive-bg-hover-accent: rgba(38, 49, 72, .14);
+    --dsw-alias-label-caption: rgb(173, 178, 184);
+    --dsw-alias-label-dimmed: rgb(225, 229, 238);
+    --dsw-alias-label-primary: rgb(15, 17, 21);
+    --dsw-alias-label-secondary: rgb(97, 102, 107);
+    --dsw-alias-label-tertiary: rgb(129, 133, 140);
+    --dsw-alias-markdown-code-block: rgb(249, 250, 251);
+  }
+  body[data-ds-dark-theme] {
+    --dsw-alias-bg-base: rgb(21, 21, 23);
+    --dsw-alias-border-l1: rgba(255, 255, 255, .06);
+    --dsw-alias-border-l2: rgba(255, 255, 255, .12);
+    --dsw-alias-border-l3: rgba(255, 255, 255, .16);
+    --dsw-alias-brand-primary: rgb(249, 250, 251);
+    --dsw-alias-brand-text: rgb(249, 250, 251);
+    --dsw-alias-interactive-bg-hover: rgba(255, 255, 255, .08);
+    --dsw-alias-interactive-bg-hover-accent: rgba(255, 255, 255, .24);
+    --dsw-alias-label-caption: rgb(129, 133, 140);
+    --dsw-alias-label-dimmed: rgb(67, 69, 74);
+    --dsw-alias-label-primary: rgb(249, 250, 251);
+    --dsw-alias-label-secondary: rgb(207, 211, 214);
+    --dsw-alias-label-tertiary: rgb(173, 178, 184);
+    --dsw-alias-markdown-code-block: rgb(27, 27, 28);
+  }
+</style></head><body>
   <div id="root">
     <div data-pane="sidebar"><div class="logoRow"><button class="newSessionButton">新会话</button></div></div>
     <main>conversation</main>
@@ -250,6 +298,96 @@ console.log(`日志全屏       : log ${maximised.logWidth}x${maximised.logHeigh
 if (maximised.listDisplay !== "none") problems.push(`日志全屏 did not hide the list (display: ${maximised.listDisplay})`);
 if (maximised.logHeight < maximised.layoutHeight - 4) {
   problems.push(`日志全屏 left the band at ${maximised.logHeight}px of a ${maximised.layoutHeight}px layout: the clamp was not released`);
+}
+
+// 7. The log has to be readable in the theme the user is in, which is a contrast ratio
+//    and not an opinion. The report was "the log is all pure black, I cannot make
+//    anything out": the background came from a token the application does not define, so
+//    it kept the dark literal, while the text colour followed the theme into near-black.
+//    Both themes are measured, because the failure was invisible in one of them.
+const luminance = (colour) => {
+  const channel = (value) => {
+    const scaled = value / 255;
+    return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(colour[0]) + 0.7152 * channel(colour[1]) + 0.0722 * channel(colour[2]);
+};
+const parseColour = (value) => {
+  const match = /rgba?\(([^)]+)\)/.exec(value ?? "");
+  if (match === null) return null;
+  const parts = match[1].split(/[,\s/]+/).filter((part) => part !== "").map(Number);
+  return parts.length >= 3 ? [parts[0], parts[1], parts[2], parts[3] ?? 1] : null;
+};
+/** A translucent colour as painted over an opaque one, so a tinted row is measured. */
+const over = (front, back) => [
+  front[0] * front[3] + back[0] * (1 - front[3]),
+  front[1] * front[3] + back[1] * (1 - front[3]),
+  front[2] * front[3] + back[2] * (1 - front[3]),
+];
+const contrast = (foreground, background) => {
+  const [high, low] = [luminance(foreground), luminance(background)].sort((left, right) => right - left);
+  return (high + 0.05) / (low + 0.05);
+};
+
+// The previous section left the band fullscreen; colours do not depend on geometry, but
+// the screenshots below should show the band as it is normally seen.
+await page.evaluate(() => document.querySelector(".dshpb-log-maxbtn").click());
+await new Promise((r) => setTimeout(r, 300));
+
+const sampleColours = () => page.evaluate(() => {
+  const panel = document.querySelector(".dshpb-panel");
+  const logBody = panel.querySelector(".dshpb-log-body");
+  const line = [...logBody.querySelectorAll("div")].find((entry) => entry.querySelector(".dshpb-log-time") !== null);
+  const groupCell = panel.querySelector(".dshpb-grouprow td");
+  const style = (node) => (node === null || node === undefined ? null : getComputedStyle(node).color);
+  const background = (node) => (node === null || node === undefined ? null : getComputedStyle(node).backgroundColor);
+  return {
+    dark: document.body.hasAttribute("data-ds-dark-theme"),
+    logBackground: background(logBody),
+    logText: style(line ?? logBody),
+    timestamp: style(line?.querySelector(".dshpb-log-time")),
+    groupLabel: style(groupCell),
+    groupCellBackground: background(groupCell),
+    panelBackground: background(panel.querySelector(".dshpb-dialog")),
+  };
+});
+
+for (const theme of ["light", "dark"]) {
+  await page.evaluate((wanted) => {
+    if (wanted === "dark") document.body.setAttribute("data-ds-dark-theme", "");
+    else document.body.removeAttribute("data-ds-dark-theme");
+  }, theme);
+  await new Promise((r) => setTimeout(r, 200));
+
+  const sample = await sampleColours();
+  const logBackground = parseColour(sample.logBackground);
+  const logText = parseColour(sample.logText);
+  const timestamp = parseColour(sample.timestamp);
+  const groupLabel = parseColour(sample.groupLabel);
+  const groupBackground = parseColour(sample.groupCellBackground);
+  const panelBackground = parseColour(sample.panelBackground);
+
+  const textRatio = logText === null || logBackground === null ? 0 : contrast(logText, logBackground);
+  const timeRatio = timestamp === null || logBackground === null ? 0 : contrast(timestamp, logBackground);
+  const groupRatio = groupLabel === null || groupBackground === null || panelBackground === null
+    ? 0
+    : contrast(groupLabel, over(groupBackground, panelBackground));
+  // What the missing token painted: the light theme's own text colour on #16181f.
+  const brokenRatio = logText === null ? 0 : contrast(logText, [22, 24, 31]);
+
+  console.log(`${theme} theme   : log text ${sample.logText} on ${sample.logBackground} = ${textRatio.toFixed(2)}:1`);
+  console.log(`             timestamp ${sample.timestamp} = ${timeRatio.toFixed(2)}:1`);
+  console.log(`             group label ${sample.groupLabel} on ${sample.groupCellBackground} = ${groupRatio.toFixed(2)}:1`);
+  console.log(`             (the same text on the missing token's #16181f fallback: ${brokenRatio.toFixed(2)}:1)`);
+
+  if (sample.dark !== (theme === "dark")) problems.push(`the ${theme} pass did not put the page in the ${theme} theme`);
+  if (textRatio < 4.5) problems.push(`the log text is only ${textRatio.toFixed(2)}:1 on its own background in the ${theme} theme`);
+  if (timeRatio < 3) problems.push(`the log timestamp is only ${timeRatio.toFixed(2)}:1 in the ${theme} theme, so the dimming went too far`);
+  if (groupRatio < 4.5) problems.push(`the group label is only ${groupRatio.toFixed(2)}:1 on the panel in the ${theme} theme`);
+
+  const shot = resolve(shots, theme === "light" ? "log-band-light.png" : "log-band.png");
+  await page.screenshot({ path: shot });
+  console.log(`             screenshot: ${shot}`);
 }
 
 await browser.close();

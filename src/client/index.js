@@ -82,9 +82,20 @@ table.dshpb-table { border-collapse:collapse; width:100%; font-size:13px; }
 .dshpb-log-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 16px; border-bottom:1px solid rgba(127,127,127,.18); }
 .dshpb-log-head b { font-size:13px; }
 .dshpb-log-head small { display:block; color:#8b93a1; font-family:Consolas,monospace; font-size:11px; margin-top:2px; word-break:break-all; max-width:420px; }
-.dshpb-log-body { flex:1; overflow:auto; padding:10px 16px 14px; font-family:Consolas,'Courier New',monospace; font-size:12px; line-height:1.6; white-space:pre-wrap; word-break:break-all; background:#16181f; }
+/* The log surface takes its background AND its text colour from the application's own
+   code-surface token, because those two have to be a matched pair. The previous version
+   set the background from an invented token (--dsw-alias-bg-l2: the app defines
+   bg-layer-1/2/3, not bg-l2) and took the colour from a real one, so the background was
+   always the dark literal while the colour followed the theme: in the light theme that
+   is near-black text on near-black, which is what the report saw. A fallback cannot
+   rescue this, because the missing token is precisely what the fallback paints. */
+.dshpb-log-body { flex:1; overflow:auto; padding:10px 16px 14px; font-family:Consolas,'Courier New',monospace; font-size:12px; line-height:1.6; white-space:pre-wrap; word-break:break-all;
+  background:var(--dsw-alias-markdown-code-block,#16181f); color:var(--dsw-alias-label-primary,#e6e8ec); }
 .dshpb-logline-err { color:#e05252; }
 .dshpb-logline-warn { color:#e0a052; }
+/* The timestamp is the one part of a log line that is always the same shape, so it is
+   the part to push back: dimming it leaves the message as the thing the eye lands on. */
+.dshpb-log-time { color:var(--dsw-alias-label-tertiary,#8b93a1); }
 /* 全屏态：面板 dialog 铺满视口 */
 .dshpb-dialog.dshpb-max { width:100vw; height:100vh; max-width:100vw; max-height:100vh; border-radius:0; border:none; }
 /* 日志全屏态：log-col 覆盖整个 dialog（服务列表隐藏） */
@@ -208,15 +219,17 @@ body.dshpb-docked .dshpb-table th {
   background:var(--dsw-alias-bg-base,#1e222a); color:var(--dsw-alias-label-caption,#8b93a1);
   border-bottom-color:var(--dsw-alias-border-l2,rgba(127,127,127,.25)); }
 body.dshpb-docked .dshpb-table td { border-bottom-color:var(--dsw-alias-border-l1,rgba(127,127,127,.12)); }
-body.dshpb-docked .dshpb-table tr:hover td { background:var(--dsw-alias-fill-l1,rgba(127,127,127,.06)); }
-body.dshpb-docked .dshpb-grouprow td { background:var(--dsw-alias-fill-l1,rgba(127,127,127,.04)); color:var(--dsw-alias-label-dimmed,#9aa3b2); }
-body.dshpb-docked .dshpb-log-body { background:var(--dsw-alias-bg-l2,#16181f); color:var(--dsw-alias-label-primary,#e6e8ec); }
+body.dshpb-docked .dshpb-table tr:hover td { background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.06)); }
+body.dshpb-docked .dshpb-grouprow td { background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.04)); color:var(--dsw-alias-label-secondary,#9aa3b2); }
+/* The log surface deliberately has no docked override: the rule above names a matched
+   background and text colour from the theme, and both resolve the same way docked or in
+   a centred dialog. Repeating them here is how the dark literal got in last time. */
 body.dshpb-docked .dshpb-close,
 body.dshpb-docked .dshpb-maxbtn { color:var(--dsw-alias-label-caption,#8b93a1); }
 body.dshpb-docked .dshpb-close:hover,
-body.dshpb-docked .dshpb-maxbtn:hover { background:var(--dsw-alias-fill-l2,rgba(127,127,127,.15)); color:var(--dsw-alias-label-primary,#fff); }
+body.dshpb-docked .dshpb-maxbtn:hover { background:var(--dsw-alias-interactive-bg-hover-accent,rgba(127,127,127,.15)); color:var(--dsw-alias-label-primary,#fff); }
 body.dshpb-docked .dshpb-btn { color:var(--dsw-alias-label-primary,#e6e8ec); border-color:var(--dsw-alias-border-l2,rgba(127,127,127,.3)); }
-body.dshpb-docked .dshpb-btn:hover { background:var(--dsw-alias-fill-l2,rgba(127,127,127,.15)); }
+body.dshpb-docked .dshpb-btn:hover { background:var(--dsw-alias-interactive-bg-hover-accent,rgba(127,127,127,.15)); }
 /* The header sits against the window's own controls, so keep its padding and give
    the collapse control room to breathe away from the corner. */
 body.dshpb-docked .dshpb-head { padding:12px 14px; }
@@ -259,13 +272,13 @@ body.dshpb-docked .dshpb-headbtns .dshpb-btn,
   font-size:12px; font-weight:500; line-height:1.2;
   padding:5px 10px; min-height:28px; border-radius:6px;
   border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.35));
-  background:var(--dsw-alias-fill-l1,rgba(127,127,127,.08));
+  background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.08));
   color:var(--dsw-alias-label-primary,#e6e8ec);
   cursor:pointer; white-space:nowrap;
 }
 body.dshpb-docked .dshpb-headbtns .dshpb-btn:hover,
 .dshpb-close.dshpb-collapse:hover {
-  background:var(--dsw-alias-fill-l2,rgba(127,127,127,.18));
+  background:var(--dsw-alias-interactive-bg-hover-accent,rgba(127,127,127,.18));
   border-color:var(--dsw-alias-border-l3,rgba(127,127,127,.5));
 }
 /* The collapse control is the primary action in this header, so it carries the
@@ -333,7 +346,7 @@ body.dshpb-docked .dshpb-close.dshpb-collapse:hover {
    text ran straight over the inputs. */
 .dshpb-config { box-sizing:border-box; padding:14px 16px 12px;
   border-bottom:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.2));
-  background:var(--dsw-alias-fill-l1,rgba(127,127,127,.05)); }
+  background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.05)); }
 .dshpb-config[hidden] { display:none; }
 .dshpb-cfghead { margin-bottom:12px; font-size:13px; font-weight:600; color:var(--dsw-alias-label-primary,#e6e8ec); }
 .dshpb-field { margin-bottom:14px; }
@@ -348,7 +361,7 @@ body.dshpb-docked .dshpb-close.dshpb-collapse:hover {
 .dshpb-segbtn { flex:1 1 0; min-width:0; padding:7px 8px; border:0; cursor:pointer; font:inherit; font-size:12px;
   background:var(--dsw-alias-bg-base,#1e222a); color:var(--dsw-alias-label-primary,#e6e8ec); }
 .dshpb-segbtn + .dshpb-segbtn { border-left:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.35)); }
-.dshpb-segbtn:hover { background:var(--dsw-alias-fill-l2,rgba(127,127,127,.15)); }
+.dshpb-segbtn:hover { background:var(--dsw-alias-interactive-bg-hover-accent,rgba(127,127,127,.15)); }
 .dshpb-segbtn[data-active="true"] { background:var(--dsw-alias-brand-primary,#3f92fe); border-color:transparent;
   color:#fff; font-weight:600; }
 
@@ -365,8 +378,12 @@ body.dshpb-docked .dshpb-close.dshpb-collapse:hover {
 .dshpb-cfgfoot { display:flex; align-items:center; justify-content:flex-end; margin-top:2px; }
 .dshpb-cfgsaved { margin-right:auto; font-size:11px; color:var(--dsw-alias-brand-text,#5ba4ff); }
 .dshpb-cfgsave { margin-right:0; padding:7px 20px; min-height:32px; font-size:12px; font-weight:600; }
+/* label-dimmed is the app's own placeholder colour, and it is a very light grey in the
+   light theme (rgb(225,229,238) on white): right for a placeholder, wrong for anything
+   the user is meant to read. The input placeholder keeps it, because that is exactly what
+   the app's own Input does; the config path below is content and takes a readable token. */
 .dshpb-cfgpath { margin:12px 0 0; padding-top:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-  font-size:10px; color:var(--dsw-alias-label-dimmed,#767e8c);
+  font-size:10px; color:var(--dsw-alias-label-tertiary,#767e8c);
   border-top:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.16)); }
 
 /* Six columns do not fit on one line in a narrow column, and letting the table grow
@@ -1205,7 +1222,19 @@ function apply(ctx) {
         const d = document.createElement('div')
         if (/\b(ERROR|Exception|FATAL)\b/.test(line)) d.className = 'dshpb-logline-err'
         else if (/\b(WARN)\b/.test(line)) d.className = 'dshpb-logline-warn'
-        d.textContent = line || ' '
+        // The leading timestamp is split out so it can be dimmed: it is the one part of
+        // a log line that is always the same shape, and leaving it at full strength made
+        // every line look alike. Anything unrecognised stays in the message, so nothing
+        // is ever dropped from a log.
+        const stamped = /^(\[[^\]\n]{1,40}\]\s*)([\s\S]*)$/.exec(line ?? '')
+        if (stamped === null) {
+          d.textContent = line || ' '
+          return d
+        }
+        const when = document.createElement('span')
+        when.className = 'dshpb-log-time'
+        when.textContent = stamped[1]
+        d.append(when, document.createTextNode(stamped[2] || ' '))
         return d
       }))
       if (nearBottom) bodyEl.scrollTop = bodyEl.scrollHeight

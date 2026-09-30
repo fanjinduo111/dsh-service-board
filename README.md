@@ -168,6 +168,65 @@ rule of it is absent from the published bundle *and* that the published sheet is
 side-by-side, flex-column-dialog version this patch replaces, and `test/client-dom.test.mjs`
 drives the switch, the mark and the poll stopping on 收起 in jsdom.
 
+### 6. `src/client/index.js` + `test/fixtures/dsh-theme-tokens.json` — the log named a theme token that does not exist
+
+**Symptom:** 「怎么日志里面字体都是纯黑的啊，看不出来东西」. In the light theme the log
+band painted near-black text on a near-black field: the lines were there, and unreadable.
+
+**Cause, measured from the application's own sheet rather than read from the plugin.** The
+log's colours were supposed to be a *pair*, and only one half of it resolved:
+
+| half | what the sheet said | what the application resolves it to |
+|---|---|---|
+| background | `var(--dsw-alias-bg-l2, #16181f)` | nothing — the app defines `bg-layer-1/2/3` and never `bg-l2`, so `#16181f` was what always painted |
+| text | `var(--dsw-alias-label-primary, #e6e8ec)` | the light theme's `rgb(15, 17, 21)` |
+
+So the light theme rendered `rgb(15, 17, 21)` on `#16181f` = **1.07:1**, while the same page
+in the dark theme rendered 16.96:1. That asymmetry is why every earlier check passed:
+
+1. A `var()` naming something the page does not define is not an error anywhere — the
+   fallback *is* the mechanism — so no assertion about the stylesheet could notice. The
+   stylesheet test even repeated the claim in a comment.
+2. `log-band.mjs` defined no theme tokens at all, so every `var()` in the sheet fell back to
+   the dark literals it was written with: the harness was exercising the one theme in which
+   this bug cannot happen. It had been testing the broken state's twin.
+
+The invented name came in with this repository's own tokenisation of the panel (commit
+`f183a37`, "so a light theme does not leave a dark slab beside the conversation"); the
+published 0.2.2 sheet names no `--dsw-alias-*` token at all, which `panel-css-control.mjs` now
+asserts. Two more names from that same block, `--dsw-alias-fill-l1` and `--dsw-alias-fill-l2`,
+do not exist either (the app's are `--dsw-alias-interactive-bg-hover` and `…-hover-accent`);
+their fallbacks happened to be translucent greys, so those two were wrong *quietly*.
+
+**Fix:** the log surface takes both of its colours from the application's own code-surface
+pair — `--dsw-alias-markdown-code-block` with `--dsw-alias-label-primary`, the two the app's
+own code blocks use — in a single rule, with no docked override to drift away from it, since
+the override is where the dark literal got in. The two invented fill names are replaced by the
+real interaction tokens, and each line's leading timestamp is split out and dimmed with
+`--dsw-alias-label-tertiary`, so a line has a shape and the message is what the eye lands on.
+Two further misuses of `--dsw-alias-label-dimmed` — `rgb(225, 229, 238)` in the light theme,
+which is the app's *placeholder* colour — moved to readable tokens: the session group heading
+to `label-secondary` (5.21:1) and the config path to `label-tertiary`, while the input
+placeholder keeps `label-dimmed`, because the app's own `Input` uses it for exactly that.
+
+**Verified by:** `test/fixtures/dsh-theme-tokens.json` is the application's real token list,
+taken from its installed sheet, and `panel-css.test.mjs` asserts that no `--dsw-alias-*` name
+the plugin uses is missing from it — the check that would have caught this class of bug.
+`test/log-band.mjs` now carries the application's own theme, both blocks, resolved through
+their `var()` chains, and measures contrast in **both** themes instead of assuming one:
+
+```
+light theme : log text rgb(15, 17, 21) on rgb(249, 250, 251) = 18.08:1
+              timestamp rgb(129, 133, 140) = 3.55:1
+              group label rgb(97, 102, 107) = 5.21:1
+              (the same text on the missing token's #16181f fallback: 1.07:1)
+dark theme  : log text rgb(249, 250, 251) on rgb(27, 27, 28) = 16.47:1
+```
+
+with a screenshot of each (`artifacts/log-band-light.png`, `artifacts/log-band.png`), and
+`client-dom.test.mjs` asserts the timestamp split both ways: a line that has one still reads
+exactly as it arrived, and a line that does not is left alone.
+
 ## Three defects found by testing operations against real processes
 
 The first round of work on this plugin shipped a `停止` button that did nothing for
