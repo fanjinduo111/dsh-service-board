@@ -51,57 +51,61 @@ window.__ModuleLoader__ = {
 };
 
 const requests = [];
+/**
+ * What the stub /state answers with. Kept mutable on purpose: a restart is a service
+ * coming back under a new pid, and the log band has to follow it, which can only be
+ * tested by changing what the next scan reports.
+ */
+let stateEntries = [
+  {
+    pid: 7300,
+    name: "node.exe",
+    cmd: '"C:\\Program Files\\nodejs\\node.exe" D:\\work\\server.js',
+    ports: [5399],
+    binds: [{ addr: "127.0.0.1", port: 5399 }],
+    // The scanner reports the creation time as FILETIME seconds (since 1601),
+    // which is what the PowerShell probe reads. Exactly two hours ago, so the
+    // age the row must show is "2时0分" and not something that has to be guessed.
+    created: Math.floor(Date.now() / 1000) + 11644473600 - 7200,
+    state: "running",
+    http: 200,
+    session: "session-abcdef12-3456",
+    sessionTitle: "构建服务",
+    logPath: "C:\\tmp\\server.log",
+    inTree: true,
+  },
+  {
+    // A Windows service: the SCM owns it and restarts it if killed, so the
+    // panel must not offer a stop that would look broken.
+    pid: 7301,
+    name: "mysqld.exe",
+    cmd: "",
+    ports: [3306],
+    binds: [{ addr: "0.0.0.0", port: 3306 }],
+    state: "running",
+    http: 0,
+    session: "unknown",
+    sessionTitle: null,
+    logPath: "C:\\tmp\\mysql.log",
+    inTree: false,
+    serviceOwned: true,
+    // No creation time at all: a row that was recalled from the registry rather
+    // than scanned has nothing to report, and the panel must not invent "0秒".
+  },
+];
+
 /** Serve the plugin's API without a network. */
 window.fetch = async (url, options) => {
   requests.push({ url: String(url), options });
   if (String(url).includes("/state")) {
-    return {
-      ok: true,
-      status: 200,
-      json: async () => ({
-        ok: true,
-        at: Date.now(),
-        entries: [
-          {
-            pid: 7300,
-            name: "node.exe",
-            cmd: '"C:\\Program Files\\nodejs\\node.exe" D:\\work\\server.js',
-            ports: [5399],
-            binds: [{ addr: "127.0.0.1", port: 5399 }],
-            // The scanner reports the creation time as FILETIME seconds (since 1601),
-            // which is what the PowerShell probe reads. Exactly two hours ago, so the
-            // age the row must show is "2时0分" and not something that has to be guessed.
-            created: Math.floor(Date.now() / 1000) + 11644473600 - 7200,
-            state: "running",
-            http: 200,
-            session: "session-abcdef12-3456",
-            sessionTitle: "构建服务",
-            logPath: "C:\\tmp\\server.log",
-            inTree: true,
-          },
-          {
-            // A Windows service: the SCM owns it and restarts it if killed, so the
-            // panel must not offer a stop that would look broken.
-            pid: 7301,
-            name: "mysqld.exe",
-            cmd: "",
-            ports: [3306],
-            binds: [{ addr: "0.0.0.0", port: 3306 }],
-            state: "running",
-            http: 0,
-            session: "unknown",
-            sessionTitle: null,
-            logPath: "C:\\tmp\\mysql.log",
-            inTree: false,
-            serviceOwned: true,
-            // No creation time at all: a row that was recalled from the registry rather
-            // than scanned has nothing to report, and the panel must not invent "0秒".
-          },
-        ],
-      }),
-    };
+    return { ok: true, status: 200, json: async () => ({ ok: true, at: Date.now(), entries: stateEntries }) };
   }
   if (String(url).includes("/log")) {
+    // Like the host: a pid the latest scan does not know about has no log to read.
+    const asked = Number(JSON.parse(options?.body ?? "{}").pid);
+    if (!stateEntries.some((entry) => entry.pid === asked)) {
+      return { ok: false, status: 404, json: async () => ({ ok: false, error: "no-log" }) };
+    }
     return {
       ok: true,
       status: 200,
@@ -110,8 +114,26 @@ window.fetch = async (url, options) => {
       json: async () => ({ ok: true, lines: ["[2026-01-01 00:00:01] line one", "[2026-01-01 00:00:02] ERROR boom", "WARN careful"] }),
     };
   }
+  if (String(url).includes("/kill")) {
+    return { ok: true, status: 200, json: async () => ({ ok: true, killed: [JSON.parse(options?.body ?? "{}").pid] }) };
+  }
+  if (String(url).includes("/start")) {
+    return { ok: true, status: 200, json: async () => ({ ok: true, pid: 7400, logFile: "C:\\tmp\\server.log" }) };
+  }
+  if (String(url).includes("/config")) {
+    return { ok: true, status: 200, json: async () => ({ ok: true, config: { scope: "all", ports: [], hide: [] } }) };
+  }
   return { ok: false, status: 404, json: async () => ({}) };
 };
+
+// The plugin must not use the window's own dialogs. In the desktop application a native
+// modal hands keyboard focus back to the window instead of to the composer, which is the
+// reported 「dsh的输入框老是没有光标了」 after using the panel; both are also untestable and
+// block the page. Calls are recorded (and answered, so a reintroduction does not hang the
+// run) and asserted against at the end.
+const nativeDialogCalls = [];
+window.confirm = () => { nativeDialogCalls.push("confirm"); return true; };
+window.alert = () => { nativeDialogCalls.push("alert"); };
 
 // Evaluate the bundle the way the module loader does: as a classic script whose
 // only global writes are the loader registration.
@@ -484,10 +506,141 @@ if (entry !== null) {
   }
 }
 
+// --- asking before stopping, inside the panel --------------------------------
+
+if (entry !== null) {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const click = (node) => node.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  const panel = document.querySelector(".dshpb-panel");
+  const buttonOn = (rowName, label) => {
+    const row = [...panel.querySelectorAll(".dshpb-table tbody tr")]
+      .find((tr) => tr.querySelector(".dshpb-svcname")?.textContent.includes(rowName));
+    return [...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent.includes(label)) ?? null;
+  };
+
+  // The previous block left the panel closed; the entry toggles it back open.
+  click(entry);
+  await wait(40);
+  console.log(`confirm setup  : panel open=${panel.classList.contains("dshpb-open")}`);
+
+  const stop = buttonOn("node.exe", "停止");
+  if (stop === null) {
+    problems.push("the node.exe row offers no 停止 button, so the confirmation cannot be tested");
+  } else {
+    click(stop);
+    await wait(20);
+    const bar = panel.querySelector(".dshpb-confirmbar");
+    const text = bar?.textContent ?? "";
+    console.log(`confirm asked  : "${text.trim().slice(0, 60)}"`);
+    if (bar === null || bar.hidden) problems.push("clicking 停止 asked nothing: no confirmation appeared in the panel");
+    else if (!/确定停止 node\.exe \(pid 7300\)/.test(text)) {
+      problems.push(`the confirmation should name the process and its pid, got "${text.trim()}"`);
+    }
+
+    // 取消 must not reach the host at all.
+    const killsBefore = requests.filter((request) => request.url.includes("/kill")).length;
+    const cancel = panel.querySelector(".dshpb-confirmno");
+    if (cancel === null) problems.push("the confirmation offers no way to cancel");
+    else {
+      click(cancel);
+      await wait(30);
+      const killsAfter = requests.filter((request) => request.url.includes("/kill")).length;
+      console.log(`cancel         : /kill requests ${killsBefore} -> ${killsAfter}, bar hidden=${bar.hidden}`);
+      if (killsAfter !== killsBefore) problems.push("cancelling the confirmation still sent /kill to the host");
+      if (!bar.hidden) problems.push("cancelling left the confirmation bar on screen");
+    }
+
+    // 确认 runs it, and the row says so while the host is working.
+    click(stop);
+    await wait(20);
+    const yes = panel.querySelector(".dshpb-confirmyes");
+    if (yes === null) problems.push("the confirmation has no 确认 button");
+    else {
+      click(yes);
+      await wait(40);
+      const killRequests = requests.filter((request) => request.url.includes("/kill"));
+      const killed = killRequests.at(-1) === undefined ? null : JSON.parse(killRequests.at(-1).options.body).pid;
+      console.log(`confirm        : /kill requests=${killRequests.length} last pid=${killed}`);
+      if (killRequests.length === 0) problems.push("confirming did not send /kill");
+      else if (killed !== 7300) problems.push(`confirming stopped pid ${killed} instead of 7300`);
+      if (!bar.hidden) problems.push("the confirmation stayed on screen after it was answered");
+    }
+
+    // A restart has to show the command it will replay: the decision is not informed
+    // otherwise, and that text used to live in a native confirm window.
+    const restartButton = buttonOn("node.exe", "重启");
+    if (restartButton === null) problems.push("the node.exe row offers no 重启 button");
+    else {
+      click(restartButton);
+      await wait(20);
+      const restartText = (panel.querySelector(".dshpb-confirmbar")?.textContent ?? "").trim();
+      console.log(`restart asks   : "${restartText.replace(/\s+/g, " ").slice(0, 80)}"`);
+      if (!/重启 node\.exe/.test(restartText)) problems.push("the restart confirmation does not name the process");
+      if (!/server\.js/.test(restartText)) problems.push("the restart confirmation does not show the command it will replay");
+      const cancels = panel.querySelector(".dshpb-confirmno");
+      if (cancels !== null) click(cancels);
+      await wait(20);
+    }
+  }
+}
+
+// --- the log band across a restart -------------------------------------------
+
+if (entry !== null) {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const panel = document.querySelector(".dshpb-panel");
+  const logButton = [...panel.querySelectorAll(".dshpb-table tbody tr")]
+    .find((tr) => tr.querySelector(".dshpb-svcname")?.textContent.includes("node.exe"))
+    ?.querySelector("button");
+  const logBody = () => panel.querySelector(".dshpb-log-body");
+  const logTitle = () => panel.querySelector(".dshpb-log-title")?.textContent ?? "";
+  const logRequests = () => requests.filter((request) => request.url.includes("/log"));
+
+  if (logButton === null || logButton === undefined) {
+    problems.push("the node.exe row offers no 日志 button, so the restart behaviour cannot be tested");
+  } else {
+    logButton.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await wait(40);
+    console.log(`band opened    : "${logTitle()}" lines=${logBody()?.children.length ?? 0}`);
+    if (!/pid 7300/.test(logTitle())) problems.push(`the band should be on pid 7300, title is "${logTitle()}"`);
+
+    // The service comes back under a new pid, as it does after 重启: same name, same
+    // port, same log file. The band must follow it instead of asking for a pid that
+    // has left the scan — which is what produced 「日志不可用：no-log」 after a restart.
+    stateEntries = stateEntries.map((e) => (e.pid === 7300 ? { ...e, pid: 7400 } : e));
+    const poller = window.setInterval;
+    // The band polls every four seconds; wait for one poll to happen, without waiting
+    // for the eight-second table refresh to also fire.
+    await wait(4300);
+    const asked = logRequests().at(-1) === undefined ? null : JSON.parse(logRequests().at(-1).options.body).pid;
+    console.log(`after restart  : title "${logTitle()}" last /log pid=${asked} body="${(logBody()?.textContent ?? "").trim().slice(0, 40)}"`);
+    if (!/pid 7400/.test(logTitle())) {
+      problems.push(`the band did not follow the service to its new pid (title "${logTitle()}")`);
+    }
+    if (asked !== 7400) problems.push(`the band still asked for pid ${asked} after the restart`);
+    if (/日志不可用|进程已结束/.test(logBody()?.textContent ?? "")) {
+      problems.push("the band reported the log as unavailable for a service that is running under a new pid");
+    }
+
+    // And when the service really is gone, say that instead of repeating the host's
+    // error code: "日志不可用：no-log" told the user nothing about their process.
+    stateEntries = stateEntries.filter((e) => e.pid !== 7400);
+    await wait(4300);
+    const goneText = (logBody()?.textContent ?? "").trim();
+    console.log(`service gone   : "${goneText.slice(0, 60)}"`);
+    if (!/进程已结束/.test(goneText)) problems.push(`a stopped service should say so, got "${goneText.slice(0, 60)}"`);
+    if (/no-log/.test(goneText)) problems.push("the panel still shows the host's raw no-log code to the user");
+    void poller;
+  }
+}
+
+if (nativeDialogCalls.length > 0) {
+  problems.push(`the panel used the window's own dialogs (${nativeDialogCalls.join(", ")}): they take focus from the composer in the desktop app — ask inside the panel instead`);
+}
+
 if (problems.length > 0) {
   console.error("\nFAILED:");
   for (const problem of problems) console.error(`  - ${problem}`);
   process.exit(1);
-}
-console.log("\nclient dom tests passed");
+}console.log("\nclient dom tests passed");
 process.exit(0);

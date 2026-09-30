@@ -93,6 +93,17 @@ async function post(path, body) {
   return { status: response.status, body: parsed, raw: text };
 }
 
+/** One same-origin GET, as the panel makes it. */
+async function get(path) {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+    headers: { "sec-fetch-site": "same-origin" },
+  });
+  const text = await response.text();
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch { /* leave null */ }
+  return { status: response.status, body: parsed, raw: text };
+}
+
 try {
   // --- /kill on a real process ------------------------------------------------
 
@@ -160,6 +171,33 @@ try {
   const logText = await readFile(logFile, "utf8").catch(() => "");
   console.log(`stdout captured: ${JSON.stringify(logText.trim().slice(0, 80))}`);
   if (!logText.includes("READY")) problems.push("the started process's output was not captured to the log file");
+
+  // --- /log answers for the pid /start has just reported ------------------------
+  //
+  // The panel's next click on that row is almost always 日志, and /log resolves the pid
+  // against the last completed scan. Answering /start before any scan had seen the child
+  // is what made a service that was running the whole time report
+  // 「日志不可用：no-log」 right after a restart (reported as 我重启之后显示不可用).
+  const logResult = await post("/api/plugins/process-board/log", { pid: startedPid, lines: 50 });
+  console.log(`POST /log      : ${logResult.status} ${JSON.stringify(logResult.body).slice(0, 140)}`);
+  if (logResult.status !== 200 || logResult.body?.ok !== true) {
+    problems.push(`/log refused the pid /start had just returned (${logResult.status} ${logResult.raw.slice(0, 120)}) — the panel shows this as 日志不可用`);
+  } else if (!Array.isArray(logResult.body.lines) || !logResult.body.lines.some((line) => line.includes("READY"))) {
+    problems.push(`/log answered without the child's own output: ${JSON.stringify(logResult.body.lines).slice(0, 140)}`);
+  }
+
+  // The service must also be listed under its own pid. The scanner merges a same-name
+  // child into its ancestor (the nginx master/worker rule), and while that rule keyed on
+  // the name alone, a service started with the same executable as its launcher was merged
+  // away: the child left the scan, its port was credited to the launcher, and /log said
+  // no-log for a process that was running. This process's launcher is `node.exe` too, so
+  // the assertion is about exactly that case.
+  const stateAfterStart = await get("/api/plugins/process-board/state");
+  const listed = (stateAfterStart.body?.entries ?? []).some((e) => e.pid === startedPid);
+  console.log(`listed in /state: ${listed} (of ${stateAfterStart.body?.entries?.length ?? 0} entries)`);
+  if (!listed) {
+    problems.push(`pid ${startedPid} was started but is not in /state: a same-name launcher chain must not merge a service away`);
+  }
 
   // --- /start with no argv must explain itself --------------------------------
 

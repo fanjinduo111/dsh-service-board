@@ -267,6 +267,98 @@ the line in place. `panel-css.test.mjs` pins the shape: a `display:block` second
 than the state word, muted with the theme's tertiary label — the same token as the log
 timestamps — in tabular figures so a column of ages does not jitter as the digits change.
 
+### 8. `/start`, the scanner's merge, and the log band — 「我重启之后显示不可用」
+
+**Reported:** `java.exe · pid 38784 / …\pb-java-backend.log / ⛶ / ×` with the log reading
+`日志不可用：no-log`, and 「我重启之后显示不可用」. A service restarted from the panel could not
+be watched afterwards, although it was demonstrably running and writing to the same file.
+
+Three separate causes, each measured rather than inferred.
+
+**The start route answered before its own rescan.** `/log` resolves a pid against the last
+*completed* scan, and `/start` replied and then called `scan()` without waiting — the opposite
+of `/kill`, which already waited for exactly this reason. Reproduced in `actions.test.mjs`: the
+route returned pid 30252, the port was open and the log file contained the child's own
+`READY 5422` banner, and `POST /log` still answered `404 no-log`. `/start` now awaits a scan and
+answers only once the pid is in it. (For that to mean anything, `scan()` also returns the
+in-flight promise instead of a bare `return`: awaiting it now means "a scan finished", not "a
+scan is already running".)
+
+**The scanner's master/worker merge deleted a real service.** The rule exists for nginx: when a
+same-name process is a descendant of another, only the ancestor is listed, because killing a
+worker just makes the master fork a new one — and the worker's listening sockets are merged into
+the ancestor's row. Keyed on the *name alone*, that rule swallowed any "launcher and service
+happen to share an executable name" chain. Measured with the host itself listening (as it does —
+the panel is served over HTTP) and a `node.exe` service started by `/start`: the child
+disappeared from the scan entirely, its port 5455 was credited to the launcher, and `/log`
+answered `no-log` for a process that was running the whole time. The merge now also requires the
+same command line — a master and its workers run the same program with the same arguments, while
+a shim or a wrapper script is a different program — and never merges away a descendant carrying a
+log marker its ancestor lacks, which is a process the panel started itself. Nothing covered this:
+`restart-path.mjs` passed throughout, because the process that starts its probe binds no port and
+so never entered the merge at all.
+
+**The band followed a pid, not a service.** A restart is a stop and a start, so the service comes
+back under a new pid; the band kept polling the old one and became `日志不可用` while the same
+service, writing to the same log file, sat one row below. The band now re-targets on the next
+render — same name and a port in common, else the same name, else the same log file — and when
+the service really is gone it says so (`进程已结束或正在重启，日志不再更新（pid …）`) instead of
+repeating the host's error code at someone who is looking at their process.
+
+**Verified by:** `actions.test.mjs` now starts a real process and immediately asks `/log` for the
+pid it was just given (it must return the child's own output) and asserts `/state` still lists
+that pid, since the merge case is exactly a service whose launcher shares its name.
+`client-dom.test.mjs` drives the client with a stub that moves the service to a new pid mid-poll:
+the band must end up asking for `7400` and must not report the log unavailable — and with the
+service removed, the honest message and never the raw `no-log`. `browser-check.mjs` does the whole
+thing against a real instance with a real fixture service (127.0.0.1:37699, a real log file):
+watch its log, click 重启, confirm, and the band follows it —
+`band opened : "node.exe · pid 28204"` → `after restart : "node.exe · pid 26704" bad=false
+fresh=true`.
+
+The merge itself is a pure function now, because it had no test at all and that is how it deleted a
+service. `scanner-merge.mjs` pins both directions on fabricated process tables: an nginx-shaped
+master/worker chain (including a grandchild) still collapses to one row carrying every worker's
+ports, while a launcher and the service it started, a javapath-style shim and the real process, a
+marked descendant, and a pair whose command lines could not be read all keep their own rows. The
+last two are deliberate about the direction of the trade: a duplicate row is visible and the user
+can act on it, a hidden service is a silent `no-log`. If some master/worker pair does not share its
+command line after all, it now shows two rows rather than one — the failure mode is noise, not
+loss.
+
+### 9. `src/client/index.js` — the composer lost its caret after the panel was used
+
+**Reported:** 「我把页面关闭之后，dsh的输入框老是没有光标了，必须重新关闭打开一个，才能有光标，
+进行文字输入」.
+
+**First, the part that could not be reproduced.** Driving a real Chromium against a real DSH
+instance, the composer takes the caret at every step: before the panel is touched, while it is
+open, after 收起, after the log band is opened and closed, and after typing into the panel's
+filter first (`caret=true typed=true` every time). The one thing about this plugin that behaves
+differently in the desktop application than in a plain browser page is that it used the *window's*
+dialogs: `window.confirm` for 停止 and 重启, and `window.alert` for every failure. In Electron those
+are modals owned by the window rather than by the page, and when they close, focus goes back to
+the window instead of to the composer — which is the reported missing caret, and re-opening a
+session re-mounts the composer, which is the workaround that was described. They were also
+untestable, blocked the page, and wrapped a replayed command line badly.
+
+So the panel now asks its questions itself: a strip under its header with 取消 and 确认, cancelled
+by Escape or by closing the panel, and a second strip for failures that expires on its own.
+`client-dom.test.mjs` clicks both (取消 must not reach `/kill`, 确认 must stop the pid whose row was
+clicked, 重启 must show the command it will replay), and asserts that `window.confirm` and
+`window.alert` are never called at all.
+
+**Second, the focus the panel does take legitimately.** Opening it moves the keyboard to its own
+controls, and closing it used to leave focus on a button that `display:none` then drops to
+`<body>`. It now remembers what had the keyboard when it opened and gives it back on close, if
+that element is still in the document — the panel does not need to know the application's DOM to
+undo its own focus theft.
+
+**Honest limit:** the desktop application itself was not driven (it belongs to the user), so the
+caret is asserted in a real page, not in that exact window. `browser-check.mjs` measures it there —
+`benchmark, panel untouched: caret=true typed=true` and `composer after 收起: caret=true
+typed=true` — so the reported behaviour is now checked in the real UI instead of assumed.
+
 ## Three defects found by testing operations against real processes
 
 The first round of work on this plugin shipped a `停止` button that did nothing for
@@ -391,7 +483,9 @@ node test/client-dom.test.mjs     # the shipped client bundle driven in jsdom
 node test/check-css-literal.mjs src/client/index.js
 node test/log-band.mjs            # the log band under the list, measured in Chrome
 node test/cmdline.test.mjs        # Windows command-line splitting
+node test/scanner-merge.mjs       # the master/worker merge, on fabricated process tables
 node test/probe-scanner.mjs       # the real scanner against this machine
+node test/browser-check.mjs <url> # a real instance in Chromium: panel, caret, restart
 ```
 
 `actions.test.mjs` and `restart-path.mjs` exist because a button the user pressed did
@@ -438,6 +532,14 @@ It fails when the sidebar entry never appears, when the panel does not open, whe
 is not a docked column, when the app does not reserve space for it, or when a header
 control is missing — and it prints the console errors and failed requests that
 explain why.
+
+It also drives the two behaviours a fake DOM cannot judge: it types into the
+application's own composer before and after the panel is collapsed (the caret the
+desktop report was about), and it spawns a real fixture service on 127.0.0.1:37699 with
+its own log file, watches that log, restarts the service through the panel's own 確認
+button and asserts the band follows it to the new pid. That fixture is temporary: it is
+stopped and its directory removed at the end of the run, and the profile's own
+「预览版说明」 modal is dismissed first, because it covers the composer while it is up.
 
 Two things it taught, both the hard way:
 

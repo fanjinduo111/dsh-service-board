@@ -243,6 +243,25 @@ body.dshpb-docked .dshpb-btn:hover { background:var(--dsw-alias-interactive-bg-h
 body.dshpb-docked .dshpb-head { padding:12px 14px; }
 body.dshpb-docked .dshpb-headbtns { gap:8px; }
 
+/* Asking a question inside the panel.
+   These two strips replace window.confirm and window.alert. A native modal belongs to
+   the window, not to the page: in the desktop application it takes keyboard focus and
+   hands it back to the window rather than to the composer, which was reported as
+   「输入框老是没有光标了」 — the caret was gone until the session was reopened. A question
+   the panel asks is the panel's own business, so it is drawn in the panel, where it can
+   be tested, styled and dismissed, and where a replayed command line has room to wrap. */
+.dshpb-confirmbar, .dshpb-notebar { display:flex; align-items:center; gap:10px; margin:0;
+  padding:10px 16px; font-size:12px; line-height:1.5;
+  border-bottom:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.2)); }
+.dshpb-confirmbar[hidden], .dshpb-notebar[hidden] { display:none; }
+.dshpb-confirmbar { background:var(--dsw-alias-interactive-bg-hover-accent,rgba(127,127,127,.12));
+  flex-wrap:wrap; }
+.dshpb-confirmtext { flex:1 1 220px; min-width:0; white-space:pre-wrap; word-break:break-word;
+  color:var(--dsw-alias-label-primary,#e6e8ec); }
+.dshpb-notebar { background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.07));
+  color:var(--dsw-alias-label-secondary,#9aa3b2); }
+.dshpb-notebar .dshpb-notetext { flex:1 1 auto; min-width:0; white-space:pre-wrap; word-break:break-word; }
+
 /* Clear the window's own buttons.
    The docked panel starts at the top of the viewport, and the native title bar's
    minimise / maximise / close buttons occupy that same top-right corner, so the
@@ -508,8 +527,7 @@ function apply(ctx) {
   let logTimer = null
   const stLabel = { running: '运行中', 'pid-alive': '启动中/未监听', stopped: '已停止', stopping: '停止中…' }
 
-  /** Seconds between the FILETIME epoch (1601) that the scanner reports and the Unix one. */
-  const FILETIME_TO_UNIX = 11644473600
+  /** Seconds between the FILETIME epoch (1601) that the scanner reports and the Unix one. */  const FILETIME_TO_UNIX = 11644473600
 
   /**
    * How long the process has been running, and when it started.
@@ -545,6 +563,82 @@ function apply(ctx) {
   // kill 在途记账（按 pid）：自动刷新整表重建 DOM 会丢按钮临时态，记账挂 pid
   // 才能跨 render 存活——期间该行状态列乐观显示「停止中…」且按钮不可再点。
   const killing = new Set()
+
+  /** The pending in-panel confirmation, and the timer that hides a note. */
+  let confirmResolve = null
+  let noteTimer = null
+  /** What had the keyboard when the panel opened, so closing can give it back. */
+  let focusBeforePanel = null
+
+  /**
+   * Ask before stopping a process, inside the panel.
+   *
+   * This was `window.confirm`, which in the desktop application is a native modal owned
+   * by the window rather than by the page: when it closed, keyboard focus went back to
+   * the window and not to the composer, so the caret was missing until the session was
+   * reopened — reported as 「dsh的输入框老是没有光标了」. The question also carries a
+   * replayed command line, which a native box wraps badly.
+   *
+   * @param {string} message - what is about to happen, with the command when there is one.
+   * @returns {Promise<boolean>} true when the user confirmed.
+   */
+  function askConfirm(message) {
+    const bar = panel?.querySelector('.dshpb-confirmbar')
+    if (!bar) return Promise.resolve(false)
+    settleConfirm(false)
+    bar.replaceChildren()
+    const text = document.createElement('span')
+    text.className = 'dshpb-confirmtext'
+    text.textContent = message
+    const cancel = document.createElement('button')
+    cancel.className = 'dshpb-btn dshpb-confirmno'
+    cancel.textContent = '取消'
+    const ok = document.createElement('button')
+    ok.className = 'dshpb-btn dshpb-confirmyes'
+    ok.textContent = '确认'
+    cancel.addEventListener('click', () => settleConfirm(false))
+    ok.addEventListener('click', () => settleConfirm(true))
+    bar.append(text, cancel, ok)
+    bar.hidden = false
+    ok.focus()
+    return new Promise((resolve) => { confirmResolve = resolve })
+  }
+
+  /** Answer the pending confirmation (from a button, Escape, or closing the panel). */
+  function settleConfirm(answer) {
+    const bar = panel?.querySelector('.dshpb-confirmbar')
+    if (bar) {
+      bar.hidden = true
+      bar.replaceChildren()
+    }
+    const resolve = confirmResolve
+    confirmResolve = null
+    if (resolve) resolve(answer)
+  }
+
+  /**
+   * Report a failure in the panel rather than in a native alert.
+   *
+   * `alert` blocks the whole page and is untestable; it is also the same modal focus
+   * problem as the confirmation above. The note goes away on its own, because the row
+   * it is about is usually being rebuilt under it by the eight-second refresh.
+   */
+  function showNote(message) {
+    const bar = panel?.querySelector('.dshpb-notebar')
+    if (!bar) return
+    bar.replaceChildren()
+    const text = document.createElement('span')
+    text.className = 'dshpb-notetext'
+    text.textContent = String(message)
+    const close = document.createElement('button')
+    close.className = 'dshpb-btn dshpb-noteclose'
+    close.textContent = '知道了'
+    close.addEventListener('click', () => { bar.hidden = true; bar.replaceChildren() })
+    bar.append(text, close)
+    bar.hidden = false
+    if (noteTimer) clearTimeout(noteTimer)
+    noteTimer = setTimeout(() => { bar.hidden = true; bar.replaceChildren() }, 12_000)
+  }
 
   /** The server's current filter, and what can be restored from. */
   let config = { scope: 'all', ports: [], hide: [] }
@@ -586,7 +680,7 @@ function apply(ctx) {
         body: JSON.stringify(patch),
       })
       const data = await res.json()
-      if (data?.ok !== true) { alert(data?.error ?? '保存失败'); return }
+      if (data?.ok !== true) { showNote(data?.error ?? '保存失败'); return }
       config = data.config ?? config
       renderConfig()
       // Confirm in place: a settings panel that saves silently leaves the user unsure
@@ -599,7 +693,7 @@ function apply(ctx) {
       }
       refresh()
     } catch (error) {
-      alert(describeFailure(error))
+      showNote(describeFailure(error))
     }
   }
 
@@ -743,6 +837,12 @@ function apply(ctx) {
   function toggle() {
     open = !open
     if (open) {
+      // Remember what had the keyboard before the panel took it. The entry is a button
+      // in the sidebar and the panel's own controls are focusable, so closing used to
+      // leave focus on a hidden button (which the browser then drops on <body>): the
+      // caret was gone from whatever the user was typing in, until they clicked it
+      // again — or reopened the session, as the report put it.
+      focusBeforePanel = document.activeElement instanceof HTMLElement ? document.activeElement : null
       buildPanel()
       panel.classList.add('dshpb-open')
       // Reserve the space instead of covering the app: the whole interface
@@ -760,6 +860,9 @@ function apply(ctx) {
   }
   function closePanel() {
     open = false
+    // A pending question dies with the panel: leaving its promise unresolved would leak
+    // the click that is awaiting it.
+    settleConfirm(false)
     panel?.classList.remove('dshpb-open')
     releaseDock()
     window.removeEventListener('resize', onViewportResize)
@@ -767,6 +870,15 @@ function apply(ctx) {
     delete entry.dataset.active
     if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = undefined }
     stopLogStream()
+    // Give the keyboard back where it was, if that element is still in the document.
+    // Deliberately not conditioned on which element it was: the panel does not need to
+    // know the application's DOM to undo its own focus theft, and an element that has
+    // been re-rendered away is simply skipped.
+    const previous = focusBeforePanel
+    focusBeforePanel = null
+    if (previous !== null && previous.isConnected && typeof previous.focus === 'function') {
+      previous.focus({ preventScroll: true })
+    }
   }
   function buildPanel() {
     if (panel) return
@@ -788,6 +900,8 @@ function apply(ctx) {
             <button class="dshpb-close" aria-label="关闭">×</button>
           </div>
         </div>
+        <div class="dshpb-confirmbar" hidden></div>
+        <div class="dshpb-notebar" hidden></div>
         <div class="dshpb-config" hidden></div>
         <div class="dshpb-layout">
           <div class="dshpb-list-col dshpb-tablewrap"><div class="dshpb-empty">扫描中…</div></div>
@@ -872,6 +986,8 @@ function apply(ctx) {
   }
   function panelEscHandler(ev) {
     if (ev.key !== 'Escape' || !open) return
+    // Escape answers a pending question first: it is the topmost thing on screen.
+    if (confirmResolve !== null) { ev.preventDefault(); settleConfirm(false); return }
     const layout = panel?.querySelector('.dshpb-layout')
     if (layout?.classList.contains('dshpb-log-max')) { layout.classList.remove('dshpb-log-max'); return }
     if (panel?.querySelector('.dshpb-dialog')?.classList.contains('dshpb-max')) { panel.querySelector('.dshpb-dialog').classList.remove('dshpb-max'); return }
@@ -930,9 +1046,42 @@ function apply(ctx) {
     }
     table.append(tb)
     body.replaceChildren(table)
-    // Re-derive the mark: the rows above are new elements, so a mark on the old ones
-    // left with them.
+    // Keep the open log attached to its service across a restart, then re-derive the
+    // mark: the rows above are new elements, so a mark on the old ones left with them.
+    retargetLog(entries)
     markLogSource()
+  }
+
+  /**
+   * Follow the open log band across a restart.
+   *
+   * A restart is a stop and a start, so the service comes back with a new pid. The band
+   * was opened on the old one, and once that pid leaves the scan the four-second poll
+   * asks the host for a process it no longer has: 404 no-log, and the band — which was
+   * showing a live log a moment earlier — turns into 「日志不可用」 while the same service,
+   * writing to the same file, sits one row below under a new pid (reported exactly that
+   * way: 「我重启之后显示不可用」). So the band follows the service rather than the pid: a
+   * row with the same name and a port in common, else the same name, else the same log
+   * file. Nothing is assumed when none of those matches — a stopped service keeps its
+   * last log on screen.
+   *
+   * @param {object[]} entries - the entries just rendered.
+   */
+  function retargetLog(entries) {
+    if (!logColOn || logTarget === null) return
+    if (entries.some((e) => e.pid === logTarget.pid)) return
+    const sameNameAndPort = entries.find((e) => e.name === logTarget.name
+      && (e.ports ?? []).some((port) => (logTarget.ports ?? []).includes(port)))
+    const sameName = entries.find((e) => e.name === logTarget.name)
+    const sameFile = logTarget.logPath
+      ? entries.find((e) => e.logPath === logTarget.logPath)
+      : undefined
+    const replacement = sameNameAndPort ?? sameName ?? sameFile
+    if (replacement === undefined) return
+    logTarget = replacement
+    panel.querySelector('.dshpb-log-title').textContent = `${replacement.name} · pid ${replacement.pid}`
+    panel.querySelector('.dshpb-log-path').textContent = replacement.logPath ?? ''
+    void loadLogOnce()
   }
 
   /**
@@ -1036,20 +1185,20 @@ function apply(ctx) {
     b.textContent = label
     b.addEventListener('click', async () => {
       if (action === 'log') { showLog(e); return }
-      if (action === 'kill' && !window.confirm(`确定停止 ${e.name} (pid ${e.pid}) 及其子进程？`)) return
+      if (action === 'kill' && !(await askConfirm(`确定停止 ${e.name} (pid ${e.pid}) 及其子进程？`))) return
       if (action === 'restart') {
         // Confirmed once, because it stops a running process. The command being
         // replayed is shown so the decision is informed rather than a leap of faith.
         const argv = splitCommandLine(e.cmd)
         const shown = argv.map((part) => (part.includes(' ') ? `"${part}"` : part)).join(' ')
-        if (!window.confirm(`重启 ${e.name}（pid ${e.pid}）？\n\n会先停止当前进程，然后按原命令行重新启动：\n${shown}`)) return
+        if (!(await askConfirm(`重启 ${e.name}（pid ${e.pid}）？\n会先停止当前进程，然后按原命令行重新启动：\n${shown}`))) return
         b.disabled = true
         b.textContent = '重启中…'
         try {
           if (e.state === 'running' || e.state === 'pid-alive') {
             const stop = await fetch(`${API}/kill`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pid: e.pid }) })
             const stopData = await stop.json()
-            if (!stopData.ok) { alert(stopData.error ?? '停止失败'); return }
+            if (!stopData.ok) { showNote(stopData.error ?? '停止失败'); return }
           }
           const start = await fetch(`${API}/start`, {
             method: 'POST',
@@ -1063,9 +1212,9 @@ function apply(ctx) {
             }),
           })
           const startData = await start.json()
-          if (!startData.ok) { alert(startData.error ?? '启动失败'); return }
+          if (!startData.ok) { showNote(startData.error ?? '启动失败'); return }
         } catch (error) {
-          alert(String(error?.message ?? error))
+          showNote(String(error?.message ?? error))
         } finally {
           setTimeout(refresh, 900)
         }
@@ -1105,11 +1254,11 @@ function apply(ctx) {
             }),
           })
           const data = await res.json()
-          if (!data.ok) { alert(data.error ?? '启动失败'); return }
+          if (!data.ok) { showNote(data.error ?? '启动失败'); return }
         }
       } catch (error) {
         killing.delete(e.pid)   // 异常路径也要清在途记账，避免行永久卡「停止中…」
-        alert(describeFailure(error))
+        showNote(describeFailure(error))
       } finally {
         // Restore the control unconditionally. The shipped code restored it only when
         // the button was not disabled, but it disables the button a few lines above —
@@ -1266,7 +1415,16 @@ function apply(ctx) {
         body: JSON.stringify({ pid: logTarget.pid, lines: 400 }),
       })
       const data = await res.json()
-      if (!data.ok) { bodyEl.textContent = `日志不可用：${data.error ?? res.status}`; return }
+      if (!data.ok) {
+        // no-log means the host's latest scan has nothing for this pid: the process is
+        // gone (stopped, or restarted with its replacement not in the list yet). Repeating
+        // the host's error code at the user is what 「日志不可用：no-log」 was; the honest
+        // statement is about the process, which is what the user is looking at.
+        bodyEl.textContent = data.error === 'no-log'
+          ? `进程已结束或正在重启，日志不再更新（pid ${logTarget.pid}）`
+          : `日志不可用：${data.error ?? res.status}`
+        return
+      }
       const nearBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 60
       bodyEl.replaceChildren(...data.lines.map((line) => {
         const d = document.createElement('div')

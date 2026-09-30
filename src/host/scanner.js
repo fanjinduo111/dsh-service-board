@@ -168,6 +168,73 @@ const NOISE = /^(powershell|pwsh|cmd|conhost|bash|sh|wsl|git|curl|tar|where\.exe
 const WORKSPACE_HINT = /(sncProject|\.dsh|webpack|vite|spring|target\\classes|jenkins|node_modules)/i
 
 /**
+ * 第三道闸门的纯函数形态：同名 master-worker 冗余合并（nginx 等）。
+ *
+ * 规则：同名进程互为父子链时只保留祖先（master）——从 master 停止 = 树杀整组，
+ * 且 master 不会被自动 refork（杀 worker 会被 master 立即拉起新的，面板表现为"停不掉"）。
+ * master 的端口显示为其同名后代的端口合集（master 常由 worker 持有监听 socket）。
+ *
+ * 「同名」这一条曾经单独成立，于是任何"同名启动器 → 同名服务"的链条都会把真正的服务当作
+ * worker 删掉：实测宿主自身在监听（面板就是 HTTP 服务）时用 /start 拉起一个 `node.exe`
+ * 服务，子进程（监听 5455、带 DSH_PB_LOG 标记）整条从扫描结果里消失，端口被并到父进程
+ * 身上，紧接着 POST /log 对该 pid 返回 404 no-log —— 面板上就是「日志不可用：no-log」，
+ * 而进程一直活着在写日志。master 与 worker 跑的是同一个程序、同一份参数，shim/启动器/
+ * 包装脚本只是可执行文件同名，所以合并还要求命令行一致；另外"带日志标记而祖先没有"的后代
+ * 本身就是面板直接启动的服务，不能当 worker 吞掉。
+ *
+ * @param {Array<{pid:number,ppid:number,name:string,cmd:string,ports:number[],logPath:string|null}>} services
+ * @returns {object[]} the rows to show, each master carrying its workers' ports.
+ */
+export function mergeWorkers(services) {
+  const normCmd = (value) => String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
+  /**
+   * True when `kid` is a worker of `master`: same program, not a service in its own right.
+   *
+   * An empty command line is not evidence of anything (the probe cannot always read one —
+   * `mysqld.exe` on this machine reports none), so it never justifies hiding a process.
+   */
+  const isWorkerOf = (master, kid) => {
+    const masterCmd = normCmd(master.cmd)
+    return master.name === kid.name
+      && masterCmd !== ''
+      && masterCmd === normCmd(kid.cmd)
+      && !(kid.logPath && !master.logPath)
+  }
+  const byPid = new Map(services.map((e) => [e.pid, e]))
+  const descendantsOf = new Map() // pid -> Set(同名同命令行的后代 pid)
+  for (const e of services) {
+    let cur = byPid.get(e.ppid)
+    let hops = 0
+    while (cur && hops < 8) {
+      if (isWorkerOf(cur, e)) {
+        if (!descendantsOf.has(cur.pid)) descendantsOf.set(cur.pid, new Set())
+        descendantsOf.get(cur.pid).add(e.pid)
+      }
+      cur = byPid.get(cur.ppid)
+      hops++
+    }
+  }
+  return services.filter((e) => {
+    // 自己是某同名进程的后代 → 剔除（保留祖先）
+    for (const [, set] of descendantsOf) {
+      if (set.has(e.pid)) return false
+    }
+    return true
+  }).map((e) => {
+    // 合并同名后代的端口到 master 显示
+    const kids = descendantsOf.get(e.pid)
+    if (kids && kids.size > 0) {
+      const ports = new Set(e.ports)
+      for (const kidPid of kids) {
+        for (const p of byPid.get(kidPid)?.ports ?? []) ports.add(p)
+      }
+      e.ports = [...ports].sort((a, b) => a - b)
+    }
+    return e
+  })
+}
+
+/**
  * 执行一次扫描并做 JS 侧过滤/归属。
  * `created` 是进程启动时刻，单位是 FILETIME 秒（1601 起，已截断到秒）；
  * 面板减掉 1601→1970 的偏移后显示"运行 3时12分 / 启动于 …"。
@@ -276,39 +343,7 @@ export async function scanProcesses() {
   // 规则：同名进程互为父子链时只保留祖先（master）——从 master 停止 = 树杀整组，
   // 且 master 不会被自动 refork（杀 worker 会被 master 立即拉起新的，面板表现为"停不掉"）。
   // master 的端口显示为其同名后代的端口合集（master 常由 worker 持有监听 socket）。
-  const svcByPid2 = new Map(services.map((e) => [e.pid, e]))
-  const descendantsOf = new Map() // pid -> Set(同名后代 pid)
-  for (const e of services) {
-    let cur = svcByPid2.get(e.ppid)
-    let hops = 0
-    while (cur && hops < 8) {
-      if (cur.name === e.name) {
-        if (!descendantsOf.has(cur.pid)) descendantsOf.set(cur.pid, new Set())
-        descendantsOf.get(cur.pid).add(e.pid)
-      }
-      cur = svcByPid2.get(cur.ppid)
-      hops++
-    }
-  }
-  const merged = services.filter((e) => {
-    const kids = descendantsOf.get(e.pid)
-    // 自己是某同名进程的后代 → 剔除（保留祖先）
-    for (const [, set] of descendantsOf) {
-      if (set.has(e.pid)) return false
-    }
-    return true
-  }).map((e) => {
-    // 合并同名后代的端口到 master 显示
-    const kids = descendantsOf.get(e.pid)
-    if (kids && kids.size > 0) {
-      const ports = new Set(e.ports)
-      for (const kidPid of kids) {
-        for (const p of svcByPid2.get(kidPid)?.ports ?? []) ports.add(p)
-      }
-      e.ports = [...ports].sort((a, b) => a - b)
-    }
-    return e
-  })
+  const merged = mergeWorkers(services)
   // 第四道：同名且端口完全重叠的实例去重（master 换代遗留：旧 master 孤儿化后与新 master 并存），
   // 保留较新实例（created 大者）——旧实例由新实例替代，显示一条即可；停止时杀的是显示的实例。
   const portKey = (e) => [...e.ports].sort().join(',')

@@ -29,6 +29,7 @@ const SCAN_INTERVAL_MS = 10_000
 export function apply(ctx) {
   let last = { at: 0, entries: [], error: null }
   let scanning = false
+  let scanPromise = null
 
   /**
    * The active filter, re-read from disk on every scan so a user editing
@@ -40,21 +41,28 @@ export function apply(ctx) {
   // Exposed for the status payload; the scanner's output is unfiltered on purpose.
   reloadConfig()
 
+  /**
+   * Run one scan. The in-flight scan is returned rather than duplicated, so a caller
+   * that must wait for a *completed* scan (the start route) can await this.
+   */
   const scan = async () => {
-    if (scanning) return
+    if (scanning) return scanPromise
     scanning = true
-    try {
-      // Pick up a hand-edited config.json on each cycle.
-      reloadConfig()
-      const entries = await scanProcesses()
-      last = { at: Date.now(), entries, error: null }
-      // 自动登记：扫描发现的服务记入登记表（供面板展示与人工重放参考）
-      for (const e of entries) rememberFromEntry(e)
-    } catch (error) {
-      last = { ...last, at: Date.now(), error: error instanceof Error ? error.message : String(error) }
-    } finally {
-      scanning = false
-    }
+    scanPromise = (async () => {
+      try {
+        // Pick up a hand-edited config.json on each cycle.
+        reloadConfig()
+        const entries = await scanProcesses()
+        last = { at: Date.now(), entries, error: null }
+        // 自动登记：扫描发现的服务记入登记表（供面板展示与人工重放参考）
+        for (const e of entries) rememberFromEntry(e)
+      } catch (error) {
+        last = { ...last, at: Date.now(), error: error instanceof Error ? error.message : String(error) }
+      } finally {
+        scanning = false
+      }
+    })()
+    return scanPromise
   }
 
   /**
@@ -361,8 +369,16 @@ export function apply(ctx) {
             })
           } finally { fs.closeSync(out) }
           child.unref()
+          // Answer only once a scan has seen the child.
+          //
+          // A restart is a kill followed by a start, and the panel's very next action on
+          // that service is usually 日志 — which sends this pid to /log, where it is
+          // resolved against the last scan. Answering before the scan had run is what
+          // produced 「日志不可用：no-log」 for a service that was running the whole time.
+          // The kill route already waits for the same reason; this one now does too.
+          await scan()
+          if (!last.entries.some((e) => e.pid === child.pid)) await scan()
           writeJson(res, 200, { ok: true, pid: child.pid, logFile })
-          void scan()
         } catch (error) {
           writeJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
         }

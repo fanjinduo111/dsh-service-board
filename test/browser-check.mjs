@@ -11,8 +11,11 @@
  * Usage: node test/browser-check.mjs <base-url-with-token>
  */
 import puppeteer from "puppeteer-core";
-import { writeFile, mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { writeFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { openSync, closeSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve, join } from "node:path";
 
 const url = process.argv[2];
 if (url === undefined) {
@@ -311,6 +314,202 @@ try {
   } else {
     await page.screenshot({ path: resolve(shots, "no-entry.png") });
     console.log(`screenshot     : ${resolve(shots, "no-entry.png")}`);
+  }
+
+  // --- the composer keeps its caret after the panel is used ----------------------
+  //
+  // The reported defect: 「我把页面关闭之后，dsh的输入框老是没有光标了，必须重新关闭打开一个」. The
+  // panel used to ask its questions with window.confirm / window.alert, which in the
+  // desktop application are native modals owned by the window: keyboard focus went back
+  // to the window rather than to the composer. Asking inside the panel is the fix, and
+  // this measures the real page: the composer takes the caret, still takes it after the
+  // panel is collapsed, and typing reaches it.
+  {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    // The profile's own intro modal covers the composer while it is up.
+    const dismissed = await page.evaluate(() => {
+      const dialog = document.querySelector('div[class*="_dialog_"]');
+      if (dialog === null) return null;
+      const button = [...dialog.querySelectorAll("button")].find((b) => /继续|知道了|确定|开始/.test(b.textContent));
+      if (button === undefined) return null;
+      const text = button.textContent.trim();
+      button.click();
+      return text;
+    });
+    if (dismissed !== null) console.log(`intro modal    : dismissed with "${dismissed}"`);
+    await wait(700);
+
+    /** Click the composer and type one character, then take it back. */
+    const typeIntoComposer = async (label) => {
+      const point = await page.evaluate(() => {
+        const node = document.querySelector('[role="textbox"][contenteditable="true"]');
+        if (node === null) return null;
+        const rect = node.getBoundingClientRect();
+        return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+      });
+      if (point === null) return { available: false };
+      const read = () => page.evaluate(() => ({
+        text: document.querySelector('[role="textbox"][contenteditable="true"]')?.textContent ?? "",
+        focused: document.activeElement !== null && document.activeElement.closest('[role="textbox"]') !== null,
+      }));
+      await page.mouse.click(point.x, point.y);
+      await wait(200);
+      const before = await read();
+      await page.keyboard.type("z");
+      await wait(250);
+      const after = await read();
+      if (after.text.length > before.text.length) await page.keyboard.press("Backspace");
+      await wait(200);
+      const restored = await read();
+      const result = { available: true, focused: after.focused, typed: after.text.length > before.text.length, restored: restored.text.length === before.text.length };
+      console.log(`  ${label}: caret=${result.focused} typed=${result.typed} restored=${result.restored}`);
+      return result;
+    };
+
+    const baseline = await typeIntoComposer("benchmark, panel untouched");
+    if (!baseline.available) {
+      problems.push("no composer ([role=textbox]) is on the page, so the caret cannot be checked");
+    }
+    // The panel is open from the checks above; collapse it the way the user does and
+    // type again. This is the reported sequence, in order.
+    await page.evaluate(() => document.querySelector(".dshpb-close:not(.dshpb-log-close)")?.click());
+    await wait(600);
+    const afterCollapse = await typeIntoComposer("composer after 收起");
+    if (afterCollapse.available && (!afterCollapse.focused || !afterCollapse.typed)) {
+      problems.push("the composer does not take the caret after the panel is collapsed (the reported missing caret)");
+    }
+    if (baseline.available && (!afterCollapse.focused || !afterCollapse.typed)) {
+      problems.push("the panel changed whether the composer accepts typing");
+    }
+    // Leave the page as it was found, so a user watching the instance sees no residue.
+    await page.evaluate(() => {
+      const node = document.querySelector('[role="textbox"][contenteditable="true"]');
+      if (node !== null && node.textContent === "") node.blur();
+    });
+  }
+
+  // --- the log band survives a restart, on a real service ------------------------
+  //
+  // Reproduces 「我重启之后显示不可用」 end to end: watch a real service's log, restart it
+  // from the panel, and the log must still be readable afterwards. The service is a
+  // real child process with a real log file, so the scanner, /kill, /start and /log all
+  // take part. The panel's restart also has to be confirmed inside the panel, which is
+  // what replaced the native dialog.
+  {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const work = await mkdtemp(join(tmpdir(), "pb-browser-"));
+    const fixturePort = 37699;
+    const fixtureLog = join(work, "fixture.log");
+    const fixtureScript = join(work, "fixture.js");
+    await writeFile(
+      fixtureScript,
+      'const http=require("http");let n=0;'
+      + `http.createServer((q,r)=>r.end("ok")).listen(${fixturePort},"127.0.0.1",()=>console.log("["+new Date().toISOString()+"] fixture listening"));`
+      + 'setInterval(()=>console.log("["+new Date().toISOString()+"] tick "+(++n)),700);',
+      "utf8",
+    );
+    const out = openSync(fixtureLog, "a");
+    let fixture = null;
+    try {
+      fixture = spawn(process.execPath, [fixtureScript, String(fixturePort)], {
+        detached: true,
+        stdio: ["ignore", out, out],
+        windowsHide: true,
+        env: { ...process.env, DSH_PB_LOG: fixtureLog },
+      });
+    } finally { closeSync(out); }
+    fixture.unref();
+    console.log(`\nfixture        : pid ${fixture.pid} on 127.0.0.1:${fixturePort}`);
+    await wait(2000);
+
+    /** The panel's row for the fixture, if the scan has shown it yet. */
+    const findRow = () => page.evaluate((port) => {
+      const row = [...document.querySelectorAll(".dshpb-table tbody tr")]
+        .find((tr) => tr.textContent.includes(String(port)));
+      if (row === undefined) return null;
+      return { pid: Number(row.dataset.pid), buttons: [...row.querySelectorAll("button")].map((b) => b.textContent.trim()) };
+    }, fixturePort);
+    const readBand = () => page.evaluate(() => ({
+      title: document.querySelector(".dshpb-log-title")?.textContent ?? "",
+      text: (document.querySelector(".dshpb-log-body")?.textContent ?? "").trim(),
+    }));
+    const clickInRow = (port, label) => page.evaluate((wanted, text) => {
+      const row = [...document.querySelectorAll(".dshpb-table tbody tr")]
+        .find((tr) => tr.textContent.includes(String(wanted)));
+      const button = row === undefined ? null : [...row.querySelectorAll("button")].find((b) => b.textContent.trim() === text);
+      if (button === undefined || button === null) return false;
+      button.click();
+      return true;
+    }, port, label);
+
+    // The panel refreshes every eight seconds; open it and wait for the row.
+    await page.evaluate(() => document.querySelector("[data-dsh-processboard-entry]")?.click());
+    let row = null;
+    for (let attempt = 0; attempt < 12 && row === null; attempt += 1) {
+      await wait(1000);
+      row = await findRow();
+    }
+    console.log(`fixture row    : ${row === null ? "not found" : `pid ${row.pid} buttons ${JSON.stringify(row.buttons)}`}`);
+    if (row === null) {
+      problems.push(`the fixture service on port ${fixturePort} never appeared as a row, so the restart path cannot be checked`);
+    } else if (!(await clickInRow(fixturePort, "日志"))) {
+      problems.push("the fixture row has no 日志 button");
+    } else {
+      await wait(1800);
+      const opened = await readBand();
+      console.log(`band opened    : "${opened.title}" watching="${opened.text.slice(0, 40)}"`);
+      if (!/fixture listening|tick/.test(opened.text)) problems.push(`the log band shows no output for the fixture: "${opened.text.slice(0, 60)}"`);
+
+      if (!(await clickInRow(fixturePort, "重启"))) {
+        problems.push("the fixture row has no 重启 button");
+      } else {
+        await wait(400);
+        const asked = await page.evaluate(() => ({
+          hidden: document.querySelector(".dshpb-confirmbar")?.hidden ?? true,
+          text: (document.querySelector(".dshpb-confirmbar")?.textContent ?? "").trim(),
+        }));
+        console.log(`restart confirm: hidden=${asked.hidden} "${asked.text.replace(/\s+/g, " ").slice(0, 60)}"`);
+        if (asked.hidden) problems.push("clicking 重启 asked for no confirmation");
+        const confirmed = await page.evaluate(() => {
+          const button = document.querySelector(".dshpb-confirmyes");
+          if (button === null) return false;
+          button.click();
+          return true;
+        });
+        if (!confirmed) problems.push("the restart confirmation offered no 确认 button");
+
+        // The host answers only once its rescan has seen the new process, so the band
+        // should show the new pid and a live log — not 日志不可用：no-log, which is what
+        // the report saw.
+        let settled = null;
+        const deadline = Date.now() + 25_000;
+        while (Date.now() < deadline) {
+          await wait(1500);
+          const band = await readBand();
+          const bad = /日志不可用|进程已结束/.test(band.text);
+          const fresh = /fixture listening|tick/.test(band.text) && !new RegExp(`pid ${row.pid}\\b`).test(band.title);
+          if (bad || fresh) { settled = { band, bad, fresh }; break; }
+        }
+        console.log(`after restart  : ${settled === null ? "no change seen" : `"${settled.band.title}" bad=${settled.bad} fresh=${settled.fresh}`}`);
+        if (settled === null) problems.push("the log band never settled after the restart");
+        else if (settled.bad) problems.push(`the band reported the log unavailable after a restart: "${settled.band.text.slice(0, 60)}"`);
+        else if (!settled.fresh) problems.push("the band did not follow the service to its new pid after the restart");
+      }
+    }
+
+    // Clean up: the restarted service is detached and owned by the host, so find it by
+    // its port and stop it, then drop the temporary directory.
+    const newPid = await page.evaluate(async (port) => {
+      const res = await fetch("/api/plugins/process-board/state", { headers: { "sec-fetch-site": "same-origin" } });
+      const data = await res.json().catch(() => null);
+      return (data?.entries ?? []).find((e) => (e.ports ?? []).includes(port))?.pid ?? null;
+    }, fixturePort);
+    for (const pid of [row?.pid, newPid]) {
+      if (!Number.isInteger(pid)) continue;
+      try { process.kill(pid); } catch { /* already gone */ }
+    }
+    await wait(500);
+    await rm(work, { recursive: true, force: true }).catch(() => {});
   }
 
 } finally {
