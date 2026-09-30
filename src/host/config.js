@@ -35,6 +35,20 @@ export const DEFAULT_CONFIG = {
   scope: 'all',
   ports: [],
   hide: [],
+  /** 面板宽度（像素）。null = 按视口比例自动决定。 */
+  width: null,
+}
+
+/** 面板宽度的合理区间，与客户端 MIN_DOCK / MAX_DOCK_MAX 保持一致。 */
+const MIN_WIDTH = 300
+const MAX_WIDTH = 1000
+
+/** 一个值是否像面板宽度。 */
+function asWidth(value) {
+  if (value === null || value === undefined || value === '') return null
+  const width = Number(value)
+  if (!Number.isInteger(width) || width < MIN_WIDTH || width > MAX_WIDTH) return null
+  return width
 }
 
 /** 一个值是否像端口列表。 */
@@ -67,6 +81,7 @@ export function normalizeConfig(raw) {
     scope,
     ports: asPorts(source.ports),
     hide: asNames(source.hide),
+    width: asWidth(source.width),
   }
 }
 

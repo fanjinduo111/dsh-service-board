@@ -22,14 +22,29 @@ import { resolve } from "node:path";
 const clientFile = resolve(import.meta.dirname, "../src/client/index.js");
 const source = await readFile(clientFile, "utf8");
 
-// The sheet is the first template literal in the file. The closing backtick is
-// NOT followed by a semicolon — it sits on a line of its own — so a `/`;\``
-// pattern would skip the real sheet and capture unrelated code further down.
-const sheetMatch = /const CSS = `([\s\S]*?)`/.exec(source);
-assert.ok(sheetMatch !== null, "the client half declares a CSS template literal");
-const css = sheetMatch[1];
-assert.ok(css.length > 1000 && css.length < 20000, `the extracted sheet has a plausible size (${css.length} bytes)`);
+// The sheet is the template literal assigned to CSS at module scope. Its closing
+// backtick is the LAST one before the next top-level declaration, because the literal
+// is the only thing between them.
+//
+// Taking everything up to the NEXT backtick instead was wrong in exactly the case that
+// matters: when a backtick is written inside the sheet, that next backtick is far away
+// inside some function, and the span swallows live code while its braces still balance.
+// check-css-literal.mjs found this the hard way; this shares the corrected approach.
+const openMatch = /^const CSS = `/m.exec(source);
+assert.ok(openMatch !== null, "the client half declares a top-level CSS template literal");
+const afterOpen = openMatch.index + openMatch[0].length;
+const rest = source.slice(afterOpen);
+const boundary = /\n(?:function |async function |const |let |var |export )/.exec(rest);
+const scope = boundary === null ? rest : rest.slice(0, boundary.index);
+const closeAt = scope.lastIndexOf("`");
+assert.ok(closeAt > 0, "the CSS literal is closed");
+const css = scope.slice(0, closeAt);
+// A size window, not an exact number: the sheet grows as the panel gains features, and
+// an upper bound that has to be raised on every addition tests nothing. Too small means
+// the literal ended early; absurdly large means the span ran past it into code.
+assert.ok(css.length > 8000 && css.length < 60000, `the extracted sheet has a plausible size (${css.length} bytes)`);
 assert.ok(!css.includes("${"), "the extracted sheet contains no template interpolation");
+assert.ok(!/\bfunction\s+\w+\s*\(/.test(css), "the extracted sheet contains no JavaScript function");
 
 /**
  * Every `selector { declarations }` rule, in document order.
@@ -196,6 +211,45 @@ assert.ok(
 assert.ok(
   lastRule(".dshpb-dialog.dshpb-max") !== undefined,
   "the dialog's fullscreen state is neutralised too",
+);
+
+// --- the port tag must not grow a border -------------------------------------
+
+// `border-style: dashed` on its own leaves the border at its initial medium width, so
+// a rule meant as a subtle hint drew a box around every port tag. The wildcard marker
+// is a colour change now. A rule may neutralise a border with `border:0`; what it must
+// not do is set a border style without also setting a width.
+for (const rule of all.filter((entry) => entry.selector.includes("dshpb-port"))) {
+  const setsStyle = /border(-top|-right|-bottom|-left)?-style\s*:/.test(rule.body);
+  const setsWidth = /border(-top|-right|-bottom|-left)?-width\s*:\s*0/.test(rule.body)
+    || /border(-top|-right|-bottom|-left)?\s*:\s*0\b/.test(rule.body);
+  assert.ok(
+    !setsStyle || setsWidth,
+    `the port tag must not set a border style without a width; ${rule.selector} { ${rule.body} }`,
+  );
+}
+
+// --- table text must not break one character per line ------------------------
+
+// At a narrow panel width the two-character 状态 header wrapped onto two lines. The
+// column labels and short status words now stay on one line, and the panel is
+// resizable so the user can give the table the room it needs.
+for (const selector of [".dshpb-table th", ".dshpb-table td"]) {
+  const rule = lastRule(selector);
+  assert.ok(rule !== undefined, `${selector} has a rule`);
+  assert.ok(/white-space:\s*nowrap/.test(rule.body), `${selector} must not break mid-word`);
+}
+assert.ok(
+  lastRule(".dshpb-grip") !== undefined,
+  "the panel has a width handle",
+);
+assert.ok(
+  all.some((entry) => entry.selector.includes(".dshpb-grip") && /cursor:\s*col-resize/.test(entry.body)),
+  "the width handle shows a resize cursor",
+);
+assert.ok(
+  all.some((entry) => /body\.dshpb-docked\s+\.dshpb-grip/.test(entry.selector) && /display:\s*block/.test(entry.body)),
+  "the width handle is shown only while the panel is docked",
 );
 
 // --- the script is otherwise untouched ---------------------------------------

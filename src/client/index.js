@@ -149,7 +149,22 @@ body.dshpb-docked .dshpb-head small,
 body.dshpb-docked .dshpb-log-head small,
 body.dshpb-docked .dshpb-sub { color:var(--dsw-alias-label-caption,#8b93a1); }
 body.dshpb-docked .dshpb-list-col { border-right-color:var(--dsw-alias-border-l1,rgba(127,127,127,.18)); }
-body.dshpb-docked .dshpb-table th { background:var(--dsw-alias-bg-base,#1e222a); color:var(--dsw-alias-label-caption,#8b93a1);
+/* A slim strip the window's own buttons cannot cover: the controls sit in the top
+   right, so this row keeps them off the very top edge of the panel. */
+body.dshpb-docked .dshpb-grip { display:block; }
+.dshpb-grip {
+  display:none; position:absolute; top:0; left:0; bottom:0; width:6px; z-index:2;
+  cursor:col-resize; background:transparent; border:0; padding:0;
+}
+.dshpb-grip::after {
+  content:""; position:absolute; top:0; bottom:0; left:2px; width:2px; border-radius:1px;
+  background:var(--dsw-alias-border-l2,rgba(127,127,127,.35));
+}
+.dshpb-grip:hover::after, .dshpb-grip[data-dragging="true"]::after {
+  background:var(--dsw-alias-brand-primary,#3f92fe);
+}
+body.dshpb-docked .dshpb-table th {
+  background:var(--dsw-alias-bg-base,#1e222a); color:var(--dsw-alias-label-caption,#8b93a1);
   border-bottom-color:var(--dsw-alias-border-l2,rgba(127,127,127,.25)); }
 body.dshpb-docked .dshpb-table td { border-bottom-color:var(--dsw-alias-border-l1,rgba(127,127,127,.12)); }
 body.dshpb-docked .dshpb-table tr:hover td { background:var(--dsw-alias-fill-l1,rgba(127,127,127,.06)); }
@@ -241,15 +256,23 @@ body.dshpb-docked .dshpb-close.dshpb-collapse:hover {
    literal and fails to parse. */
 .dshpb-close.dshpb-collapse::before { content:"»"; font-size:15px; line-height:1; }
 
-/* A wildcard bind is worth distinguishing at a glance from a loopback one: the
-   first is reachable from the network, the second is not. */
-.dshpb-port-any { border-style:dashed; }
+/* A wildcard bind is worth distinguishing at a glance from a loopback one: the first
+   is reachable from the network, the second is not. The marker is a colour change, not
+   a border: setting border-style alone gives the border its initial medium width, so
+   an earlier dashed rule drew a box around every port tag instead of a subtle hint. */
+.dshpb-port-any { border:0; background:rgba(127,127,127,.18); color:var(--dsw-alias-label-primary,#c9d1d9); }
 
 /* The action column: buttons keep their label on one line, and the column is wide
    enough for the longest of them. "停止" wrapped onto two lines in a screenshot
    because the cell had no room, which reads as a broken control. */
 .dshpb-table td:last-child { white-space:nowrap; min-width:150px; }
 .dshpb-btn { white-space:nowrap; }
+/* Column labels and short status words must never break mid-word. At a narrow panel
+   width the two-character 状态 header wrapped onto two lines — one character per
+   line — which reads as a rendering fault rather than a narrow column. */
+.dshpb-table th { white-space:nowrap; }
+.dshpb-table td { white-space:nowrap; }
+.dshpb-svccmd { white-space:nowrap; }
 /* A service the SCM owns: the control explains itself instead of inviting a click. */
 .dshpb-btn-service { opacity:.75; cursor:default; }
 
@@ -309,6 +332,8 @@ function apply(ctx) {
   let panel
   let mask
   let refreshTimer
+  /** The panel's left-edge width handle. */
+  let grip
   // 会话标题：由 host 注入（state API 的 sessionTitle 字段，读自 DSH sessionTitle 服务）
   const sessionTitles = new Map()
   function rememberTitle(sessionId, title) {
@@ -374,6 +399,11 @@ function apply(ctx) {
         config = data.config ?? config
         configPath = data.path ?? ''
         renderConfig()
+        // The stored width can only be honoured once this response arrives, and the
+        // panel is already open by then, so the dock is re-applied here. Without this
+        // a dragged width was saved and then ignored on the next load, leaving the
+        // panel at its default.
+        if (open) applyDock()
       }
     } catch {
       // A missing config endpoint (an older host) simply leaves the defaults.
@@ -465,10 +495,22 @@ function apply(ctx) {
       </div>
       <p class="dshpb-cfgpath" title="${escapeAttr(configPath)}">配置文件：${escapeHtml(configPath)}</p>`
   }
+  /** The narrowest and widest the panel may be dragged, in pixels. */
+  const MIN_DOCK = 300
+  const MAX_DOCK_MAX = 1000
+  /**
+   * The docked width.
+   *
+   * A stored width wins, because the user set it by dragging. Otherwise the column
+   * takes a share of the viewport, clamped: the table has six columns and at too
+   * narrow a width its header labels break into one character per line.
+   */
   function dockWidth() {
-    // Trimmed from a 360-560 range: the panel is a monitoring column beside the
-    // conversation, and at the wider end it crowded the app for no benefit.
-    return Math.max(320, Math.round(Math.min(460, window.innerWidth * 0.38)))
+    const viewportMax = Math.max(MIN_DOCK, Math.min(MAX_DOCK_MAX, window.innerWidth - 360))
+    if (Number.isInteger(config.width) && config.width > 0) {
+      return Math.max(MIN_DOCK, Math.min(viewportMax, config.width))
+    }
+    return Math.max(MIN_DOCK, Math.min(460, Math.round(window.innerWidth * 0.38), viewportMax))
   }
   /** Apply the reserved space at the current viewport size. */
   function applyDock() {
@@ -477,6 +519,7 @@ function apply(ctx) {
     const root = document.getElementById('root')
     if (root) root.style.paddingRight = `${width}px`
     document.body.classList.add('dshpb-docked')
+    if (grip) grip.setAttribute('aria-valuenow', String(width))
   }
   /** Give the app back the space the panel was occupying. */
   function releaseDock() {
@@ -486,6 +529,57 @@ function apply(ctx) {
     if (panel) panel.style.width = ''
   }
   const onViewportResize = () => { if (open) applyDock() }
+
+  /**
+   * Drag the panel's left edge to set its width.
+   *
+   * The panel and the space reserved for it must move together, so the same width
+   * drives both. The value is stored on the host after the drag ends, not during it:
+   * a write per pointer move would be a request per frame.
+   */
+  function startGripDrag(event) {
+    if (panel === null || grip === null) return
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = panel.getBoundingClientRect().width
+    const viewportMax = Math.max(MIN_DOCK, Math.min(MAX_DOCK_MAX, window.innerWidth - 360))
+    grip.dataset.dragging = 'true'
+    document.body.style.userSelect = 'none'
+    const onMove = (moveEvent) => {
+      // The handle is on the left edge, so dragging left widens the panel.
+      const next = Math.round(startWidth + (startX - moveEvent.clientX))
+      const width = Math.max(MIN_DOCK, Math.min(viewportMax, next))
+      panel.style.width = `${width}px`
+      const root = document.getElementById('root')
+      if (root) root.style.paddingRight = `${width}px`
+      grip.setAttribute('aria-valuenow', String(width))
+    }
+    const onEnd = () => {
+      delete grip.dataset.dragging
+      document.body.style.userSelect = ''
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onEnd)
+      window.removeEventListener('pointercancel', onEnd)
+      const settled = Math.round(panel.getBoundingClientRect().width)
+      if (settled !== config.width) void saveConfig({ width: settled })
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onEnd)
+    window.addEventListener('pointercancel', onEnd)
+  }
+  /** Keyboard control for the same handle: a drag target nothing can reach is not accessible. */
+  function onGripKey(event) {
+    if (panel === null) return
+    const step = event.key === 'ArrowLeft' ? 24 : event.key === 'ArrowRight' ? -24 : 0
+    if (step === 0) return
+    event.preventDefault()
+    const viewportMax = Math.max(MIN_DOCK, Math.min(MAX_DOCK_MAX, window.innerWidth - 360))
+    const width = Math.max(MIN_DOCK, Math.min(viewportMax, Math.round(panel.getBoundingClientRect().width) + step))
+    panel.style.width = `${width}px`
+    const root = document.getElementById('root')
+    if (root) root.style.paddingRight = `${width}px`
+    if (grip) grip.setAttribute('aria-valuenow', String(width))
+  }
   function toggle() {
     open = !open
     if (open) {
@@ -524,6 +618,8 @@ function apply(ctx) {
     panel.className = 'dshpb-panel'
     panel.innerHTML = `
       <div class="dshpb-dialog" role="dialog" aria-label="Agent 服务面板">
+        <div class="dshpb-grip" role="separator" aria-orientation="vertical" tabindex="0"
+          aria-label="拖动调整面板宽度" title="拖动调整宽度（也可用左右方向键）"></div>
         <div class="dshpb-head">
           <div><b>Agent 服务面板</b><small class="dshpb-sub">由 DSH 会话启动的服务 · 三态探测 · 可启停/看日志</small></div>
           <div class="dshpb-headbtns">
@@ -571,6 +667,12 @@ function apply(ctx) {
       configToggle.setAttribute('aria-expanded', String(!showing))
       renderConfig()
     })
+    // --- the width handle ----------------------------------------------------
+    grip = panel.querySelector('.dshpb-grip')
+    if (grip) {
+      grip.addEventListener('pointerdown', startGripDrag)
+      grip.addEventListener('keydown', onGripKey)
+    }
     configBox.addEventListener('click', (event) => {
       const target = event.target instanceof Element ? event.target : null
       if (target === null) return

@@ -164,6 +164,24 @@ the whole polluted region for the stylesheet and found its braces balanced.
 `check-css-literal-control.mjs` now reproduces that exact corruption and asserts the
 guard rejects it, and the guard locates the literal's real end instead.
 
+## Two more that a user's screenshot found
+
+**The port tags wore a box.** A wildcard bind was marked with
+`border-style: dashed` — but setting the style alone leaves the border at its initial
+`medium` width, so every port tag grew a frame. The marker is a colour change now, and
+`panel-css.test.mjs` asserts that no port rule sets a border style without a width.
+
+**The column headers wrapped one character per line.** At a 460px panel the
+two-character `状态` header had roughly twelve pixels per character, so it stacked
+vertically. Cell text is `nowrap` now, and — the real answer to the report — the panel
+is **resizable**: a drag handle on its left edge, 300–1000px, with arrow-key support,
+and the chosen width stored in `config.json` so it survives a reload. The panel and the
+space reserved for it are driven by the same number, so they cannot disagree.
+
+`verify-resize.mjs` drives all of that in a real browser: the port tag has no border,
+no column header exceeds 40px tall, dragging widens the panel *and* the reserved space
+together, and after a reload the panel returns at the stored width.
+
 ## Tests
 
 ```sh

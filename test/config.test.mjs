@@ -89,6 +89,23 @@ try {
   if (patched.body?.config?.scope !== "session") problems.push("a partial patch must keep the other fields");
   if (JSON.stringify(patched.body?.config?.ports) !== JSON.stringify([8080])) problems.push("the patched field must win");
 
+  // --- the panel width persists like any other setting ----------------------
+  const sized = await call("/api/plugins/process-board/config", "POST", { width: 620 });
+  console.log(`width set      : ${JSON.stringify(sized.body?.config)}`);
+  if (sized.body?.config?.width !== 620) problems.push(`the width was not stored: ${JSON.stringify(sized.body?.config)}`);
+  const widthOnDisk = JSON.parse(await readFile(configFile, "utf8"));
+  if (widthOnDisk.width !== 620) problems.push(`the width was not written to disk: ${JSON.stringify(widthOnDisk)}`);
+  // A partial patch for a filter must not clear the width.
+  const keptWidth = await call("/api/plugins/process-board/config", "POST", { scope: "all" });
+  if (keptWidth.body?.config?.width !== 620) problems.push("a filter-only patch cleared the stored width");
+  // An unusable width falls back to auto rather than being stored.
+  for (const bad of [10, 99999, "wide"]) {
+    const rejected = await call("/api/plugins/process-board/config", "POST", { width: bad });
+    if (rejected.body?.config?.width !== null) {
+      problems.push(`an unusable width was accepted: ${JSON.stringify(bad)} -> ${JSON.stringify(rejected.body?.config?.width)}`);
+    }
+  }
+
   // --- a hand-edit must be picked up on the next scan -----------------------
   await writeFile(configFile, JSON.stringify({ scope: "all", ports: [], hide: ["hand-edited"] }), "utf8");
   // The state handler reloads the config on each scan; asking for state triggers one.

@@ -73,8 +73,10 @@ try {
   // 3. A backtick written inside the stylesheet.
   //    The inserted character must be a real backtick: an earlier version of this case
   //    used an apostrophe in the comment, so it never exercised what it claimed to.
+  //    The anchor is the port tag rule, which is stable; an earlier anchor named a rule
+  //    that a later change removed, and the case then stopped running without saying so.
   const withBacktick = source.replace(
-    /(\.dshpb-port-any \{ border-style:dashed; \})/,
+    /(\.dshpb-port \{ display:inline-block;)/,
     "/* a backtick follows -> ` <- and it must be rejected */\n$1",
   );
   if (withBacktick === source) {
