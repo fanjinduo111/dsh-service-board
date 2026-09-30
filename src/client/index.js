@@ -105,9 +105,23 @@ table.dshpb-table { border-collapse:collapse; width:100%; font-size:13px; }
    width itself is applied inline by the script, so the two values cannot drift
    apart and no CSS variable resolution is involved. */
 body.dshpb-docked > #root { transition:padding-right .16s ease-out; }
-body.dshpb-docked .dshpb-panel > .dshpb-dialog { width:100%; min-width:0; height:100vh; max-height:100vh;
+body.dshpb-docked .dshpb-panel > .dshpb-dialog { width:100%; min-width:0; box-sizing:border-box;
   border-radius:0; border:0; border-left:1px solid rgba(127,127,127,.25);
-  box-shadow:-16px 0 40px rgba(0,0,0,.35); }
+  box-shadow:-16px 0 40px rgba(0,0,0,.35);
+  /* Clear the window's own buttons, which occupy the top-right corner of the same
+     strip this panel starts in. Without this the panel's header controls are drawn
+     underneath them: visible to the DOM and to a test, invisible and unclickable to a
+     person.
+     This is an inset on the absolutely positioned dialog, NOT a padding-top. With
+     height:100vh and box-sizing:border-box, a top padding pushed the whole box up to
+     -46px and the content back to 0, so the header did not move at all: the two
+     offsets cancelled exactly.
+     The variable is redefined here rather than inherited, so the offset does not
+     depend on which ancestor happens to carry the class. */
+  --dshpb-chrome-h:max(env(titlebar-area-height, 0px), 46px);
+  position:absolute; top:var(--dshpb-chrome-h); right:0; bottom:0; left:0;
+  height:auto; max-height:none;
+}
 /* At this width two side-by-side columns would each be too narrow to read, so the
    log takes the whole panel and the list hides while it is open. */
 .dshpb-list-col { flex:1 1 auto; min-width:0; border-right:0; }
@@ -152,6 +166,25 @@ body.dshpb-docked .dshpb-btn:hover { background:var(--dsw-alias-fill-l2,rgba(127
 body.dshpb-docked .dshpb-head { padding:12px 14px; }
 body.dshpb-docked .dshpb-headbtns { gap:8px; }
 
+/* Clear the window's own buttons.
+   The docked panel starts at the top of the viewport, and the native title bar's
+   minimise / maximise / close buttons occupy that same top-right corner, so the
+   panel's own header controls were drawn underneath them: present, and impossible to
+   see or click. The dialog is inset below that strip instead (see the rule above).
+   env(titlebar-area-height) is the standard way to learn the height when the window
+   uses the Window Controls Overlay API; where it is unavailable the fallback covers a
+   Windows title bar with the taller caption buttons this desktop app draws. */
+body.dshpb-docked { --dshpb-chrome-h:max(env(titlebar-area-height, 0px), 46px); }
+/* The strip the dialog leaves free is painted with the panel's own surface, so the
+   column reads as continuing to the window edge rather than starting mid-air.
+   The edges are stated explicitly rather than left to the base rule's inset shorthand:
+   that shorthand resolves top to auto, and the used value then came out as the full
+   viewport height, which pushed the whole panel off the bottom of the window. */
+body.dshpb-docked .dshpb-panel {
+  background:var(--dsw-alias-bg-base,#1e222a);
+  top:0; right:0; bottom:0; left:auto; height:100vh;
+}
+
 /* Header controls, made plainly visible.
    The first version styled the collapse control as bare text: no border, no
    background, 12px, sitting in the same corner as the window's own close glyph. A
@@ -160,9 +193,9 @@ body.dshpb-docked .dshpb-headbtns { gap:8px; }
    border, a background, and a hit area large enough to aim at. */
 body.dshpb-docked .dshpb-headbtns .dshpb-btn,
 .dshpb-close.dshpb-collapse {
-  display:inline-flex; align-items:center; gap:5px;
-  font-size:13px; font-weight:500; line-height:1.2;
-  padding:7px 14px; min-height:32px; border-radius:7px;
+  display:inline-flex; align-items:center; gap:4px;
+  font-size:12px; font-weight:500; line-height:1.2;
+  padding:5px 10px; min-height:28px; border-radius:6px;
   border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.35));
   background:var(--dsw-alias-fill-l1,rgba(127,127,127,.08));
   color:var(--dsw-alias-label-primary,#e6e8ec);
@@ -343,7 +376,9 @@ function apply(ctx) {
       </div>`
   }
   function dockWidth() {
-    return Math.max(360, Math.round(Math.min(560, window.innerWidth * 0.46)))
+    // Trimmed from a 360-560 range: the panel is a monitoring column beside the
+    // conversation, and at the wider end it crowded the app for no benefit.
+    return Math.max(320, Math.round(Math.min(460, window.innerWidth * 0.38)))
   }
   /** Apply the reserved space at the current viewport size. */
   function applyDock() {

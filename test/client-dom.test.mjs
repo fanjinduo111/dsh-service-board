@@ -164,10 +164,20 @@ if (entry !== null) {
       problems.push("the panel has no dialog element");
     } else {
       const dialogStyle = window.getComputedStyle(dialog);
-      if (dialogStyle.height === "" || dialogStyle.height === "auto") {
-        problems.push("the docked dialog has no height");
+      // The dialog's height comes from anchoring both edges below the window's own
+      // control strip. An earlier version instead required a concrete height, which
+      // was the bug: it made the dialog cover that strip, so the panel's header
+      // controls were drawn underneath the window buttons.
+      console.log(`dialog edges   : top=${dialogStyle.top} bottom=${dialogStyle.bottom} position=${dialogStyle.position}`);
+      if (dialogStyle.position !== "absolute") {
+        problems.push(`the docked dialog should be absolutely positioned, got ${dialogStyle.position}`);
       }
-      console.log(`dialog height  : ${dialogStyle.height}`);
+      if (!/46px|var\(--dshpb-chrome-h/.test(dialogStyle.top)) {
+        problems.push(`the docked dialog should start below the window controls, got top=${dialogStyle.top}`);
+      }
+      if (/100vh/.test(dialogStyle.height)) {
+        problems.push("the docked dialog must not claim the full viewport height");
+      }
     }
 
     // --- the app must make room, not be covered ------------------------------

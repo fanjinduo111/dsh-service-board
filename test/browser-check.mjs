@@ -186,6 +186,7 @@ try {
           return {
             width: Math.round(rect.width),
             height: Math.round(rect.height),
+            top: Math.round(rect.top),
             fontSize: nodeStyle.fontSize,
             background: nodeStyle.backgroundColor,
             color: nodeStyle.color,
@@ -197,7 +198,7 @@ try {
           const node = panel.querySelector(".dshpb-cfgtoggle");
           if (node === null) return null;
           const rect = node.getBoundingClientRect();
-          return { width: Math.round(rect.width), height: Math.round(rect.height) };
+          return { width: Math.round(rect.width), height: Math.round(rect.height), top: Math.round(rect.top) };
         })(),
       };
     });
@@ -223,14 +224,19 @@ try {
       if (!(Number.parseFloat(report.rootInset) > 0)) problems.push(`the app did not reserve space (root padding-right ${report.rootInset})`);
 
       // A control nobody can find is not a control. These bounds come from the
-      // complaint that the buttons were too small to notice or aim at.
+      // complaint that the buttons were too small to notice or aim at. They are
+      // minimums for a usable hit area, not targets: the same report asked for the
+      // panel to take less room, so the buttons are deliberately compact.
+      const MIN_W = 40;
+      const MIN_H = 24;
+      const MIN_FONT = 12;
       const box = report.collapseBox;
       if (box === null || box.visible !== true) {
         problems.push("the collapse control is not visible");
       } else {
-        if (box.height < 28) problems.push(`the collapse control is only ${box.height}px tall`);
-        if (box.width < 64) problems.push(`the collapse control is only ${box.width}px wide`);
-        if (Number.parseFloat(box.fontSize) < 13) problems.push(`the collapse control's text is ${box.fontSize}`);
+        if (box.height < MIN_H) problems.push(`the collapse control is only ${box.height}px tall`);
+        if (box.width < MIN_W) problems.push(`the collapse control is only ${box.width}px wide`);
+        if (Number.parseFloat(box.fontSize) < MIN_FONT) problems.push(`the collapse control's text is ${box.fontSize}`);
         const background = String(box.background);
         const transparent = background === "rgba(0, 0, 0, 0)" || background === "transparent";
         if (transparent) problems.push("the collapse control has no background, so it reads as plain text");
@@ -239,8 +245,20 @@ try {
       const filterBox = report.filterBox;
       if (filterBox === null) problems.push("the filter control has no box");
       else {
-        if (filterBox.height < 28) problems.push(`the filter control is only ${filterBox.height}px tall`);
-        if (filterBox.width < 48) problems.push(`the filter control is only ${filterBox.width}px wide`);
+        if (filterBox.height < MIN_H) problems.push(`the filter control is only ${filterBox.height}px tall`);
+        if (filterBox.width < MIN_W) problems.push(`the filter control is only ${filterBox.width}px wide`);
+      }
+
+      // The window's own minimise / maximise / close buttons occupy the top-right
+      // corner of the strip the panel starts in. Header controls drawn there are
+      // present in the DOM and unreachable in practice, which is exactly what a user
+      // reported, so their position is asserted and not just their existence.
+      const CHROME_H = 46;
+      for (const [name, box] of [["collapse", report.collapseBox], ["filter", report.filterBox]]) {
+        if (box === null) continue;
+        if (box.top < CHROME_H) {
+          problems.push(`the ${name} control sits ${box.top}px from the top, inside the window's control strip (${CHROME_H}px)`);
+        }
       }
     }
 

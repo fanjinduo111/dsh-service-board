@@ -86,18 +86,49 @@ assert.ok(
 
 // The dialog is sized by the docked rule; the width itself is applied inline by
 // the script (one source of truth, no CSS-variable resolution involved), so the
-// rule only has to fill the panel and take the full height.
+// rule only has to fill the panel and fill the height below the window's controls.
+//
+// This assertion used to require height:100vh, which was the bug: the dialog covered
+// the strip the native minimise / maximise / close buttons occupy, so the panel's own
+// header controls were drawn underneath them and could not be clicked. Anchoring both
+// edges below that strip is the corrected behaviour.
 const dialogRule = all
   .filter((rule) => rule.selector.includes(".dshpb-panel > .dshpb-dialog") && rule.selector.startsWith("body.dshpb-docked"))
   .at(-1);
 assert.ok(dialogRule !== undefined, `the docked dialog has its own rule; selectors seen: ${JSON.stringify(all.map((r) => r.selector).filter((s) => s.includes("dshpb-dialog")))}`);
 assert.ok(
-  /height:\s*100vh/.test(dialogRule.body),
-  "the docked dialog fills the viewport height",
+  /top:\s*var\(--dshpb-chrome-h/.test(dialogRule.body),
+  "the docked dialog starts below the window's own control strip",
+);
+assert.ok(
+  /bottom:\s*0/.test(dialogRule.body),
+  "the docked dialog is anchored to the bottom edge",
+);
+assert.ok(
+  !/height:\s*100vh/.test(dialogRule.body),
+  "the docked dialog must not claim the full viewport height, which covered the window controls",
+);
+assert.ok(
+  /height:\s*auto/.test(dialogRule.body),
+  "the dialog's height comes from its two anchored edges",
 );
 assert.ok(
   /width:\s*100%/.test(dialogRule.body),
   "the docked dialog fills the width the script reserved",
+);
+// The strip the dialog leaves free is painted, or the column would appear to start
+// mid-air instead of at the window edge.
+const dockedPanelRule = all
+  .filter((rule) => /^body\.dshpb-docked\s+\.dshpb-panel$/.test(rule.selector.trim()))
+  .at(-1);
+assert.ok(dockedPanelRule !== undefined, "the docked panel has its own rule");
+assert.ok(
+  /background:/.test(dockedPanelRule.body),
+  "the docked panel paints the strip left free above the dialog",
+);
+assert.ok(
+  /top:\s*0/.test(dockedPanelRule.body) && /height:\s*100vh/.test(dockedPanelRule.body),
+  "the docked panel is pinned to the viewport, not left to the base rule's inset shorthand",
 );
 
 // The app must make room rather than be covered, so the patch has to inset the
