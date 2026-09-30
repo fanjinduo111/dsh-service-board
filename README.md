@@ -182,6 +182,45 @@ space reserved for it are driven by the same number, so they cannot disagree.
 no column header exceeds 40px tall, dragging widens the panel *and* the reserved space
 together, and after a reload the panel returns at the stored width.
 
+## A live service to exercise the panel with
+
+`D:\work\demo-service.js` is a throwaway service built for exactly that: it binds two
+loopback ports so a row shows more than one bound address, prints a startup banner and
+a heartbeat, exposes `/noise` to make the log grow on demand, and handles SIGTERM so
+"停止" has a graceful path to take as well as a hard one.
+
+```powershell
+$env:DSH_PB_LOG = "$env:TEMP\pb-demo-service.log"   # the marker the panel reads
+node D:\work\demo-service.js
+```
+
+Both operation checks use it: `live-service.mjs` drives the four endpoints against an
+already-running instance — polling for the first scan, because the state route answers
+from the previous scan and a cold start legitimately has nothing — and `shot-live.mjs`
+photographs the result through the session filter.
+
+## Three narrow-width defects, all found by measuring
+
+The action column is the reason the panel is open at all, and it kept leaving the
+panel. Each cause was only visible in a measurement:
+
+| Symptom | Cause |
+|---|---|
+| Two ports widened the row until PID and the buttons left the panel | the port tags' wrapper was a plain `<span>`, and `flex-wrap` does nothing on an inline element |
+| The table overflowed by 47px at 700px | the service column grew to whatever the command preview asked for; the preview was allowed 380px |
+| Overflow returned at the narrowest widths | the table's minimum content width exceeded the panel regardless of the caps |
+
+The first two are fixed by wrapping the tags in an `inline-flex` box and capping the
+preview and its column. The third needs `table-layout: fixed` with declared column
+widths, which is the only way to guarantee the buttons stay reachable rather than
+merely likely. The panel's minimum is 360px rather than 300, because below that six
+columns cannot fit and a service list that scrolls horizontally past its own buttons is
+worse than a floor.
+
+`verify-resize.mjs` sweeps ten widths and asserts, at each one, that the table stays
+inside the panel and the action column still holds its buttons — plus that a dragged
+width survives a reload.
+
 ## Tests
 
 ```sh
