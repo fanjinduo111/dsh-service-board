@@ -47,6 +47,14 @@ table.dshpb-table { border-collapse:collapse; width:100%; font-size:13px; }
 .dshpb-dot.dshpb-stopping { background:#e0a052; }
 .dshpb-dot.dshpb-stopped { background:#6b7280; }
 .dshpb-st-running { color:#4ade80; } .dshpb-st-pid-alive { color:#e0a052; } .dshpb-st-stopping { color:#e0a052; } .dshpb-st-stopped { color:#8b93a1; }
+/* The uptime sits under the state word, so a row answers "how long has this been up"
+   without a seventh column competing for a 460px panel. It uses the application's
+   tertiary label: the same token the log timestamps use, for the same reason — it is
+   read after the state, not instead of it. Tabular figures keep a column of ages from
+   jittering as the digits change. */
+.dshpb-statecell { white-space:nowrap; }
+.dshpb-uptime { display:block; margin-top:2px; font-size:11px; line-height:1.3;
+  color:var(--dsw-alias-label-tertiary,#8b93a1); font-variant-numeric:tabular-nums; }
 .dshpb-code { font-family:Consolas,Menlo,monospace; font-size:12px; color:#c9d1d9; }
 .dshpb-http-ok { color:#4ade80; font-weight:600; } .dshpb-http-dead { color:#e05252; font-weight:600; }
 /* The port column holds one tag per listening socket, and each tag carries its
@@ -499,6 +507,41 @@ function apply(ctx) {
   let logTarget = null
   let logTimer = null
   const stLabel = { running: '运行中', 'pid-alive': '启动中/未监听', stopped: '已停止', stopping: '停止中…' }
+
+  /** Seconds between the FILETIME epoch (1601) that the scanner reports and the Unix one. */
+  const FILETIME_TO_UNIX = 11644473600
+
+  /**
+   * How long the process has been running, and when it started.
+   *
+   * `created` is the process's own creation time as FILETIME seconds — seconds since
+   * 1601, which is what the PowerShell probe reads, truncated there to the second rather
+   * than rounded — so it is shifted to the Unix epoch here. Nothing else is a guess: the
+   * value comes from the process itself, and a row recalled from the registry rather than
+   * scanned (a service that is already stopped) has no creation time at all, which is why
+   * this returns null instead of inventing "0秒".
+   *
+   * The relative age is what the row shows, because that is the question a list answers
+   * at a glance — did this one restart? The absolute time is carried in the title, where
+   * it costs no column width in a panel that is 460px wide by default.
+   *
+   * @param {object} e - one scanned entry, with `created` in FILETIME seconds.
+   * @returns {{label: string, startedAt: string, title: string}|null} the age, or null.
+   */
+  function uptimeOf(e) {
+    const startedSeconds = Number(e.created ?? 0) - FILETIME_TO_UNIX
+    if (!Number.isFinite(startedSeconds) || startedSeconds <= 0) return null
+    const age = Math.max(0, Math.floor(Date.now() / 1000) - startedSeconds)
+    const started = new Date(startedSeconds * 1000)
+    const pad = (value) => String(value).padStart(2, '0')
+    const label = age < 60 ? `${age}秒`
+      : age < 3600 ? `${Math.floor(age / 60)}分`
+        : age < 86400 ? `${Math.floor(age / 3600)}时${Math.floor((age % 3600) / 60)}分`
+          : `${Math.floor(age / 86400)}天${Math.floor((age % 86400) / 3600)}时`
+    const startedAt = `${started.getFullYear()}-${pad(started.getMonth() + 1)}-${pad(started.getDate())} `
+      + `${pad(started.getHours())}:${pad(started.getMinutes())}:${pad(started.getSeconds())}`
+    return { label, startedAt, title: `启动于 ${startedAt}，已运行 ${label}` }
+  }
   // kill 在途记账（按 pid）：自动刷新整表重建 DOM 会丢按钮临时态，记账挂 pid
   // 才能跨 render 存活——期间该行状态列乐观显示「停止中…」且按钮不可再点。
   const killing = new Set()
@@ -932,7 +975,14 @@ function apply(ctx) {
     c1.innerHTML = `<span class="dshpb-svcname">${escapeHtml(e.name)}</span>` +
       (cmdShort ? `<span class="dshpb-svccmd" title="${escapeAttr(e.cmd ?? '')}">${escapeHtml(cmdShort)}</span>` : '')
     const c2 = document.createElement('td')
+    c2.className = 'dshpb-statecell'
+    // The state, and under it how long it has been in it. The row is two lines tall
+    // already (the service name sits above its command), so the second line here costs
+    // no height, and a seventh column would only be dropped by the narrow-width rules
+    // that already hide HTTP and PID.
+    const uptime = uptimeOf(e)
     c2.innerHTML = `<span class="dshpb-dot dshpb-${state}"></span><span class="dshpb-st-${state}">${stLabel[state] ?? state}</span>`
+      + (uptime === null ? '' : `<span class="dshpb-uptime" title="${escapeAttr(uptime.title)}">${escapeHtml(uptime.label)}</span>`)
     const c3 = document.createElement('td')
     c3.innerHTML = bindTags(e)
     const c4 = document.createElement('td')

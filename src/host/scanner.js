@@ -79,7 +79,12 @@ foreach($p in $procs){
   $pl=@()
   if($ports.ContainsKey($tp)){ $pl=$ports[$tp] }
   $created=0
-  if($p.CreationDate){ try{ $created=[int64]($p.CreationDate.ToFileTimeUtc()/10000000) }catch{} }
+  # 启动时刻：FILETIME 秒（1601 起），**截断**到秒而不是四舍五入。
+  # 原写法 $p.CreationDate.ToFileTimeUtc()/10000000 得到的是 double，[int64] 会就近取整——
+  # /1e7 先把 100ns 计数变成小数，再整体加 1，于是小数部分过 .5 的进程会比实际启动时间晚 1 秒；
+  # 实测 WMI 报 17:31:53 的进程被算成 17:31:54，而面板要把这个值原样显示成"启动于 17:31:53"。
+  # 单位保持不变（仍旧是 1601 起的秒）：客户端只做减偏移，老宿主+新客户端也不会突然错一大截。
+  if($p.CreationDate){ try{ $created=[int64][math]::Truncate($p.CreationDate.ToFileTimeUtc()/10000000) }catch{} }
   $emit.Add([pscustomobject]@{
     pid=$tp; ppid=[int]$p.ParentProcessId; name=$name
     cmd=if($p.CommandLine){[string]$p.CommandLine}else{''}
@@ -164,6 +169,8 @@ const WORKSPACE_HINT = /(sncProject|\.dsh|webpack|vite|spring|target\\classes|je
 
 /**
  * 执行一次扫描并做 JS 侧过滤/归属。
+ * `created` 是进程启动时刻，单位是 FILETIME 秒（1601 起，已截断到秒）；
+ * 面板减掉 1601→1970 的偏移后显示"运行 3时12分 / 启动于 …"。
  * @returns {Promise<Array<{pid:number,ppid:number,name:string,cmd:string,created:number,session:string,inTree:boolean,ports:number[],binds:Array<{addr:string,port:number}>}>>}
  */
 export async function scanProcesses() {

@@ -360,6 +360,37 @@ assert.ok(
   /color:\s*var\(--dsw-alias-label-tertiary/.test(logTimeRule.body),
   `the timestamp is dimmed with the theme's tertiary label (found: ${logTimeRule.body})`,
 );
+// --- the state cell answers how long the process has been up -------------------
+
+// A row has to say when its process started without a seventh column: the panel is 460px
+// wide by default and the narrow-width rules already give up HTTP and PID. So the age is a
+// second line inside the state cell, which costs no height at all, because every row
+// already carries the service name above its command.
+const stateCellRule = lastRule(".dshpb-statecell");
+assert.ok(stateCellRule !== undefined, "the state cell has a rule of its own");
+assert.ok(
+  /white-space:\s*nowrap/.test(stateCellRule.body),
+  `the state cell keeps its words on one line (found: ${stateCellRule.body})`,
+);
+const uptimeRule = lastRule(".dshpb-uptime");
+assert.ok(uptimeRule !== undefined, "the uptime line has a rule");
+assert.ok(
+  /display:\s*block/.test(uptimeRule.body),
+  `the uptime is a second line in the cell rather than a column of its own (found: ${uptimeRule.body})`,
+);
+assert.ok(
+  /font-size:\s*11px/.test(uptimeRule.body),
+  `the uptime is set smaller than the state word it sits under (found: ${uptimeRule.body})`,
+);
+assert.ok(
+  /color:\s*var\(--dsw-alias-label-tertiary/.test(uptimeRule.body),
+  `the uptime is muted with the theme's tertiary label, like the log timestamps (found: ${uptimeRule.body})`,
+);
+assert.ok(
+  /tabular-nums/.test(uptimeRule.body),
+  `the uptime uses tabular figures, so a column of ages does not jitter as the digits change (found: ${uptimeRule.body})`,
+);
+
 // 日志全屏 still means the band takes the panel, so the clamp has to be released.
 const logMaxRule = lastRule(".dshpb-layout.dshpb-log-max .dshpb-log-col");
 assert.ok(
@@ -447,6 +478,7 @@ console.log(`mask disabled    : ${maskDisabled}`);
 console.log(`layout           : ${layoutRule.body}`);
 console.log(`log band         : ${logOnRule.body}`);
 console.log(`log surface      : ${logBodyRule.body}`);
+console.log(`uptime line      : ${uptimeRule.body}`);
 console.log(`theme tokens     : ${namedTokens.length} named, ${dangling.length} dangling`);
 console.log("\npanel css tests passed");
 

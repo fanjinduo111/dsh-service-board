@@ -117,6 +117,9 @@ await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>
       session: 'session-aaaa1111-2222',
       sessionTitle: '构建服务',
       logPath: 'C:\\\\tmp\\\\svc-' + (index + 1) + '.log',
+      // FILETIME seconds, as the scanner reports them: each service started an hour
+      // later than the one above it, so svc-1 reads 1时0分 and svc-2 reads 2时0分.
+      created: Math.floor(Date.now() / 1000) + 11644473600 - (index + 1) * 3600,
       inTree: true,
     }));
     window.fetch = async (url, options) => {
@@ -172,12 +175,20 @@ const geometry = () => page.evaluate(() => {
   const logBody = panel.querySelector(".dshpb-log-body");
   const table = panel.querySelector(".dshpb-table");
   const highlighted = [...panel.querySelectorAll(".dshpb-table tbody tr.dshpb-logging")];
+  const serviceRows = [...panel.querySelectorAll(".dshpb-table tbody tr")]
+    .filter((tr) => tr.querySelector(".dshpb-svcname") !== null);
   return {
     viewport: { width: window.innerWidth, height: window.innerHeight },
     docked: document.body.classList.contains("dshpb-docked"),
     logOn: log.classList.contains("dshpb-log-on"),
     panel: box(panel), dialog: box(dialog), layout: box(layout),
     list: box(list), log: box(log), logBody: box(logBody), table: box(table),
+    // The state cell carries the age under the state word, so every service row has one
+    // and the action column still has to fit inside the panel beside it.
+    uptimes: serviceRows.map((tr) => tr.querySelector(".dshpb-uptime")?.textContent ?? null),
+    uptimeTitles: serviceRows.map((tr) => tr.querySelector(".dshpb-uptime")?.getAttribute("title") ?? null),
+    firstRowuptime: serviceRows[0]?.querySelector(".dshpb-uptime")?.textContent ?? null,
+    actions: box(serviceRows[0]?.querySelector("td:last-child")),
     layoutDirection: getComputedStyle(layout).flexDirection,
     logTitle: panel.querySelector(".dshpb-log-title").textContent,
     logPath: panel.querySelector(".dshpb-log-path").textContent,
@@ -202,6 +213,24 @@ console.log(`log body       : ${first.logBody.width}x${first.logInnerHeight} (sc
 console.log(`log title      : ${first.logTitle} <- ${first.logPath}`);
 console.log(`log lines      : ${first.logLines}, error shown: ${first.logOpenError ?? "no"}`);
 console.log(`layout height  : ${first.layout.height} vs dialog ${first.dialog.height} (viewport ${first.viewport.height})`);
+console.log(`uptimes        : ${first.uptimes.length} rows, first = ${first.firstRowuptime} (${first.uptimeTitles[0]})`);
+
+// The age of each process is a second line inside the state cell. Every service row must
+// carry one, it must read as an age rather than a placeholder, and the line must not push
+// the action column out of the panel: this viewport is 460px of panel, which is the width
+// a user actually gets, and the buttons are the reason the panel is open.
+if (first.uptimes.some((label) => label === null)) {
+  problems.push(`${first.uptimes.filter((label) => label === null).length} service rows show no uptime`);
+}
+if (!first.uptimes.every((label) => /^\d+[秒分时天]/.test(label ?? ""))) {
+  problems.push(`an uptime does not read as an age: ${JSON.stringify(first.uptimes.slice(0, 4))}`);
+}
+if (!/^启动于 \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}，已运行 /.test(first.uptimeTitles[0] ?? "")) {
+  problems.push(`the uptime carries no absolute start time in its title: ${JSON.stringify(first.uptimeTitles[0])}`);
+}
+if (first.actions === null || first.actions.right > first.panel.right + 1) {
+  problems.push(`the action column ends at ${first.actions?.right} outside the panel edge at ${first.panel.right}`);
+}
 
 // 1. The log is a band under the list, not a column beside it.
 if (first.log === null || first.list === null) problems.push("the panel has no list column or no log column");
@@ -269,6 +298,14 @@ const afterRefresh = await geometry();
 console.log(`after refresh  : ${afterRefresh.highlightedRows} highlighted row(s), log still on ${afterRefresh.logTitle}`);
 if (afterRefresh.highlightedRows !== 1) {
   problems.push(`the auto-refresh dropped the source-row mark (${afterRefresh.highlightedRows} rows marked)`);
+}
+// The age is derived on every render, so it has to be there after a rebuild too — and it
+// has to be the age of the process in that row, not the first row's age repeated.
+if (afterRefresh.firstRowuptime !== "1时0分") {
+  problems.push(`the first row's uptime reads ${JSON.stringify(afterRefresh.firstRowuptime)} after the refresh, expected 1时0分`);
+}
+if (new Set(afterRefresh.uptimes).size < 2) {
+  problems.push(`every row shows the same age (${JSON.stringify(afterRefresh.uptimes.slice(0, 3))}), so it is not the row's own process`);
 }
 if (!afterRefresh.logOn || !/svc-2\.exe/.test(afterRefresh.logTitle)) {
   problems.push("the auto-refresh closed or re-targeted the log");

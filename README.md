@@ -227,6 +227,46 @@ with a screenshot of each (`artifacts/log-band-light.png`, `artifacts/log-band.p
 `client-dom.test.mjs` asserts the timestamp split both ways: a line that has one still reads
 exactly as it arrived, and a line that does not is left alone.
 
+### 7. `src/client/index.js` + `src/host/scanner.js` — every row says how long its process has been up
+
+**Asked for:** 「给每个监控的任务上加一个启动时间，或者运行时间」. A row should say when the
+process it names started, or how long it has been running.
+
+**Both, in one place.** The age is what a list answers at a glance — did this one restart? —
+so it sits in the state cell under the state word (`运行中 / 3时12分`), and the exact
+wall-clock start time rides in that element's `title`. No new scanner field was needed: the
+probe has reported `created` since the first version, and the published panel simply never
+showed it.
+
+It is a second line inside the state cell rather than a seventh column, for a measured
+reason: the panel is 460px wide by default and the narrow-width container queries ahead of it
+already give up HTTP and then PID, so a new column would have been the first thing hidden and
+the last thing missed. The row is two lines tall already — the service name sits above its
+command — so this line costs no height at all, and nothing has to be renumbered: those
+queries select columns by `nth-child`.
+
+**The value was wrong before it was ever displayed.** `created` is FILETIME seconds (since
+1601), and the probe built it as `[int64]($p.CreationDate.ToFileTimeUtc()/10000000)`:
+PowerShell divides in floating point and the cast then *rounded to the nearest* second, so a
+process that started at `17:31:53.7` was reported as `17:31:54`. That was invisible while the
+value was only used to order two instances of the same port — and it becomes a wrong 「启动于」
+the moment it is put in front of a person. The probe truncates now (`[math]::Truncate`), and
+`probe-scanner.mjs` reads WMI independently to compare every scanned process against it, which
+is the check that caught the extra second: `start times : 2 comparable, 0 wrong`. The unit was
+deliberately left as FILETIME seconds rather than switched to the Unix epoch, because a
+browser refresh outruns a host restart: a client expecting Unix seconds while an older host
+was still running would have shown `0秒` on every row, with a year-2395 tooltip.
+
+**Verified by:** `client-dom.test.mjs` renders a process that started exactly two hours ago and
+asserts the cell reads `2时0分` with `启动于 …，已运行 2时0分` in the title — and that a row with
+no creation time at all (a service recalled from the registry, not scanned) claims no age
+rather than inventing one. `log-band.mjs` asserts that all 24 rows carry an age in real
+Chromium at 460px, that the ages differ per row instead of one value repeating, that they
+survive the eight-second refresh, and that the action column still ends inside the panel with
+the line in place. `panel-css.test.mjs` pins the shape: a `display:block` second line, smaller
+than the state word, muted with the theme's tertiary label — the same token as the log
+timestamps — in tabular figures so a column of ages does not jitter as the digits change.
+
 ## Three defects found by testing operations against real processes
 
 The first round of work on this plugin shipped a `停止` button that did nothing for

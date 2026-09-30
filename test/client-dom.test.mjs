@@ -68,6 +68,10 @@ window.fetch = async (url, options) => {
             cmd: '"C:\\Program Files\\nodejs\\node.exe" D:\\work\\server.js',
             ports: [5399],
             binds: [{ addr: "127.0.0.1", port: 5399 }],
+            // The scanner reports the creation time as FILETIME seconds (since 1601),
+            // which is what the PowerShell probe reads. Exactly two hours ago, so the
+            // age the row must show is "2时0分" and not something that has to be guessed.
+            created: Math.floor(Date.now() / 1000) + 11644473600 - 7200,
             state: "running",
             http: 200,
             session: "session-abcdef12-3456",
@@ -90,6 +94,8 @@ window.fetch = async (url, options) => {
             logPath: "C:\\tmp\\mysql.log",
             inTree: false,
             serviceOwned: true,
+            // No creation time at all: a row that was recalled from the registry rather
+            // than scanned has nothing to report, and the panel must not invent "0秒".
           },
         ],
       }),
@@ -231,6 +237,27 @@ if (entry !== null) {
     const anyTag = portTags.find((tag) => tag.textContent.includes("0.0.0.0"));
     if (anyTag !== undefined && !/局域网|全部网卡/.test(anyTag.getAttribute("title") ?? "")) {
       problems.push("a wildcard bind should explain what 0.0.0.0 means");
+    }
+
+    // Every row has to say when its process started. The age is relative (that is the
+    // question a list answers at a glance) and the absolute time rides in the title, so a
+    // scanned process shows both and a recalled one shows neither.
+    const uptimes = serviceRows.map((row) => ({
+      name: row.querySelector(".dshpb-svcname").textContent,
+      label: row.querySelector(".dshpb-uptime")?.textContent ?? null,
+      title: row.querySelector(".dshpb-uptime")?.getAttribute("title") ?? null,
+    }));
+    console.log(`uptimes        : ${JSON.stringify(uptimes)}`);
+    const scanned = uptimes.find((entry) => entry.name === "node.exe");
+    if (scanned?.label !== "2时0分") {
+      problems.push(`a process started two hours ago should read 2时0分, got ${JSON.stringify(scanned?.label)}`);
+    }
+    if (!/^启动于 \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}，已运行 2时0分$/.test(scanned?.title ?? "")) {
+      problems.push(`the uptime title should carry the absolute start time, got ${JSON.stringify(scanned?.title)}`);
+    }
+    const recalled = uptimes.find((entry) => entry.name === "mysqld.exe");
+    if (recalled?.label !== null) {
+      problems.push(`a row with no creation time must not claim an age, got ${JSON.stringify(recalled?.label)}`);
     }
 
     const actionLabels = [...panel.querySelectorAll(".dshpb-btn")].map((button) => button.textContent);
