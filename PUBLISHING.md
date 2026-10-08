@@ -151,7 +151,9 @@ E403 ... Granular access tokens that bypass two-factor authentication may not pe
 - [ ] LICENSE 保留上游版权声明；README 明确写这是 fork、指向原项目
 - [ ] `package.json` 的 `version` 与 `CHANGELOG.md` 顶部一致（`test/package-identity.test.mjs` 会查）
 - [ ] **客户端模块 id == npm 包名**（改过包名就必须同步；否则入口不出现，且只在真机才暴露）
+- [ ] `node scripts/doctor-client-ids.mjs` 全 ok（装完插件后跑；id 与包名不一致时症状是**整个 DSH 界面打不开**，不是只少一个入口）
 - [ ] `dsh plugin --profile <干净profile> add <tarball>` 后 `browser-check.mjs` 全绿
+- [ ] **`src/` 是真实目录，不是指向已安装插件的 junction**（`test/package-identity.test.mjs` 会拒；见 §8）
 - [ ] 别和上游 `dsh-process-board` 同时装在同一个 profile（会插两行侧边栏入口）
 
 ## 5. 之后每次发版
@@ -196,3 +198,30 @@ E403 ... Granular access tokens that bypass two-factor authentication may not pe
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" https://dsh-plugin.org/plugins/fanjinduo111/dsh-service-board
 ```
+
+## 8. 别把 `src/` 再做成 junction（2026-10-08 的事故）
+
+这个仓库最初的开发方式是把 `src/` 做成**目录 junction**，指向已安装的插件
+（`<profile>/node_modules/dsh-process-board/src`）：改这里、那边 Ctrl+R，很方便。
+一旦这个仓库不再等于它所编辑的那个包，方便就变成事故——fork 把客户端模块 id 从
+`dsh-process-board` 改成 `dsh-service-board`，这个改动**顺着 junction 写进了用户正在用的
+上游同名安装**，于是那台机器的 DSH 网页界面直接打不开（`client-modules: duplicate factory
+registration` / `web boot: 1 entry did not activate`）。
+
+现在 `src/` 是真实目录，且 `test/package-identity.test.mjs` 会拒绝被链接的 `src/`。
+如果你想继续要"改完立刻生效"的手感，用**复制**代替链接（`scripts/build-package.mjs` 就是
+把 `src/` 复制进 `.package/` 再打包的）：
+
+```powershell
+# 从仓库推到 profile（单向、显式，坏了也只坏那一个包的副本）
+Copy-Item src\* "$env:USERPROFILE\.dsh\profiles\<profile>\node_modules\<包名>\src\" -Recurse -Force
+```
+
+使唤完顺手体检一遍：
+
+```powershell
+node scripts/doctor-client-ids.mjs
+```
+
+要拆 junction 时用 `cmd /c rmdir <目录>`——**不要**用 `Remove-Item -Recurse`，它会顺着链接
+删进目标里。

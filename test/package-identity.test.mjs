@@ -16,7 +16,7 @@
  *
  * Run: node test/package-identity.test.mjs
  */
-import { readFile, access } from "node:fs/promises";
+import { readFile, access, lstat, readlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -56,6 +56,13 @@ const files = pkg.files ?? [];
 check("published file list carries src", files.includes("src"), JSON.stringify(files));
 check("published file list carries the bundle patch", files.includes("cordis.patch.yml"));
 check("published file list carries the license", files.includes("LICENSE"));
+
+// 4b. src/ must be this repository's own directory, never a junction onto an installed copy.
+// It was one until 2026-10-08, which meant renaming the client id for the fork also renamed
+// it inside a working install of the upstream-named package — and that install's DSH web UI
+// stopped opening. A shared directory cannot be allowed to come back quietly.
+const srcStats = await lstat(join(root, "src"));
+check("src/ is a real directory, not a link to an installed plugin", srcStats.isDirectory() && !srcStats.isSymbolicLink(), srcStats.isSymbolicLink() ? `symlink -> ${await readlink(join(root, "src"))}` : "directory");
 
 // 5. Manifest shape the harness reads.
 check("dsh.client.platform is web", pkg.dsh?.client?.platform === "web", String(pkg.dsh?.client?.platform));

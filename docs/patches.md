@@ -641,3 +641,40 @@ tarball, so the released 0.3.0 artefact is unchanged.
 The gap this exposes is worth naming: for a *timing* assertion, "wait longer" and "wait for the
 good state" are different fixes, and only the second one keeps a real regression detectable.
 
+## The junction that took a working DSH install down with it
+
+`src/` in this repository used to be a directory junction onto the installed plugin
+(`<profile>/node_modules/dsh-process-board/src`) — a pleasant live-edit loop: edit here, press
+Ctrl+R there. It stopped being pleasant the moment this repository stopped being *the same
+package* as the one it edited. Renaming the client module id for the fork
+(`dsh-process-board` → `dsh-service-board`) therefore also renamed it inside a working install
+of the upstream-named package, and an id that disagrees with the package name is exactly the
+failure this repository had already measured once:
+
+```
+client-modules: duplicate factory registration for "dsh-service-board" (bundle executed twice without invalidate?)
+Error: web boot: 1 entry did not activate
+```
+
+The DSH web UI never rendered. To the person in front of it that reads as "DSH is broken", not
+as "a plugin is misconfigured" — worth remembering that the symptom of a client-module mistake is
+the whole application while the cause lives in one plugin.
+
+Two fixes, both verified:
+
+1. `src/` is a real directory now — the link came off with `cmd /c rmdir src` (never
+   `Remove-Item -Recurse` on a junction: that walks into the target) and the content was copied
+   back. The repository's copy and the installed copy now differ in exactly one line, the client
+   id; the other five files hash identical, so the bug fixes survived the split.
+2. `test/package-identity.test.mjs` refuses a linked `src/` outright. Negative control: with the
+   junction recreated, the suite reports both the link and the id mismatch it causes and exits 1
+   (`FAILED: 2 check(s)`); removing the link returns it to `PASSED`.
+
+`scripts/doctor-client-ids.mjs` checks the general invariant across every profile on the
+machine: any installed package whose client bundle calls `__ModuleLoader__.load({ id })` must
+register its own package name. It confirmed the breakage (`desktop/dsh-process-board` was
+registering `dsh-service-board`) and now reports all six client-bearing packages here as
+consistent. It follows symlinks, because pnpm installs plugins as links into its store — the
+first version silently skipped the very profile the fork had been installed into.
+
+
