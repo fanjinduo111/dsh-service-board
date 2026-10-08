@@ -32,11 +32,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/GITHUB_OWNER/dsh-service-board.git"
+    "url": "git+https://github.com/fanjinduo111/dsh-service-board.git"
   },
-  "homepage": "https://github.com/GITHUB_OWNER/dsh-service-board#readme",
+  "homepage": "https://github.com/fanjinduo111/dsh-service-board#readme",
   "bugs": {
-    "url": "https://github.com/GITHUB_OWNER/dsh-service-board/issues"
+    "url": "https://github.com/fanjinduo111/dsh-service-board/issues"
   },
   "author": "dsh-service-board contributors",
   "license": "MIT",

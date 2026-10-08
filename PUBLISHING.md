@@ -11,7 +11,7 @@
 
 ### 0.1 填身份（一条命令）
 
-包里所有出现 GitHub 用户名的地方都写成了占位符 `GITHUB_OWNER`（package.json 的
+包里所有出现 GitHub 用户名的地方都写成了占位符 `fanjinduo111`（package.json 的
 repository/homepage/bugs、README 的 git 安装方式）。跑一次即可全部替换：
 
 ```bash
@@ -91,7 +91,7 @@ git tag v0.3.0 && git push --tags
 
 ## 4. 提交前逐条核对
 
-- [ ] `node scripts/set-identity.mjs --check` 通过（无 `GITHUB_OWNER` 残留）
+- [ ] `node scripts/set-identity.mjs --check` 通过（无 `fanjinduo111` 残留）
 - [ ] 仓库 public，Topics 含 `dsh-plugin`
 - [ ] README 第一屏就有 `dsh plugin --profile web add dsh-service-board`
 - [ ] README 有截图（`docs/images/*.png`，且在 `files` 里，npm 页面也能显示——上游把图片排除在包外，npm 页面是裂的）

@@ -46,10 +46,10 @@ DSH（DeepSeek Harness）服务面板插件——在 Web GUI 侧边栏查看**�
 dsh plugin --profile web add dsh-service-board
 
 # 方式 B：git 仓库直装（锁定分支最新提交）
-dsh plugin --profile web add https://github.com/GITHUB_OWNER/dsh-service-board.git
+dsh plugin --profile web add https://github.com/fanjinduo111/dsh-service-board.git
 
 # 方式 C：clone 后本地链接（可改代码、随改随生效）
-git clone https://github.com/GITHUB_OWNER/dsh-service-board.git ~/dsh-service-board
+git clone https://github.com/fanjinduo111/dsh-service-board.git ~/dsh-service-board
 dsh plugin --profile web add link:~/dsh-service-board
 ```
 
