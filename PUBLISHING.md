@@ -179,3 +179,20 @@ E403 ... Granular access tokens that bypass two-factor authentication may not pe
 | 收录申请 | <https://github.com/dshplugin/dsh-plugin-hub/issues/118>（先 `unconfirmed`，人工核实后转 `verified`；README 已含安装命令，爬虫刷新即可发现） |
 | 线上遗留 | `0.0.0-stage`（stage-only token 造成的占位版本，见 2.1；不影响安装，`latest` 已是 0.3.0；删除按钮受 2.3 限制） |
 | 真机验证 | 按 README 命令从 npm 装入干净 profile，`browser-check.mjs` 通过：`after restart: "node.exe · pid 41112" bad=false fresh=true` |
+| 发布后的提交 | 之后对 `README.md` / `docs/` / `test/` 的提交**不改变**已发布的 0.3.0 tarball（`files` 里没有 `test`；npm 上那份 README 仍带收录徽章），下次发版自然跟着更新 |
+
+### 7.1 收录徽章什么时候挂
+
+`https://dsh-plugin.org/plugins/fanjinduo111/dsh-service-board` 在人工核实前是 **404**，
+所以 README 里的收录徽章先注释掉了（写「已收录」而页面 404 属于提前声明）。
+等这个 URL 返回 200 后再挂回：
+
+```md
+[![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/fanjinduo111/dsh-service-board)
+```
+
+检查一行命令：
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://dsh-plugin.org/plugins/fanjinduo111/dsh-service-board
+```
