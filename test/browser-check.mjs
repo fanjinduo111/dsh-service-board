@@ -490,18 +490,29 @@ try {
         // The host answers only once its rescan has seen the new process, so the band
         // should show the new pid and a live log — not 日志不可用：no-log, which is what
         // the report saw.
+        //
+        // A transient "进程已结束或正在重启" is not a verdict: the band is retargeted by the
+        // next /state poll, and on a loaded machine (npm + pnpm + Chromium all running) the
+        // rescan can take longer than one poll interval. This used to stop at the first bad
+        // reading and reported a product defect that was really a stopwatch (measured
+        // 2026-10-08: same bytes passed on an idle run, failed under load, passed again).
+        // So keep waiting for the fresh reading, and only fail if the band stays bad until
+        // the deadline.
         let settled = null;
+        let stayedBad = null;
         const deadline = Date.now() + 25_000;
         while (Date.now() < deadline) {
           await wait(1500);
           const band = await readBand();
           const bad = /日志不可用|进程已结束/.test(band.text);
           const fresh = /fixture listening|tick/.test(band.text) && !new RegExp(`pid ${row.pid}\\b`).test(band.title);
-          if (bad || fresh) { settled = { band, bad, fresh }; break; }
+          if (fresh) { settled = { band, bad, fresh }; break; }
+          if (bad) stayedBad = { band, bad, fresh };
         }
+        if (settled === null) settled = stayedBad;
         console.log(`after restart  : ${settled === null ? "no change seen" : `"${settled.band.title}" bad=${settled.bad} fresh=${settled.fresh}`}`);
         if (settled === null) problems.push("the log band never settled after the restart");
-        else if (settled.bad) problems.push(`the band reported the log unavailable after a restart: "${settled.band.text.slice(0, 60)}"`);
+        else if (settled.bad) problems.push(`the band stayed on the old pid, reporting the log unavailable, for 25s after a restart: "${settled.band.text.slice(0, 60)}"`);
         else if (!settled.fresh) problems.push("the band did not follow the service to its new pid after the restart");
       }
     }
