@@ -4,6 +4,8 @@ DSH（DeepSeek Harness）服务面板插件——在 Web GUI 侧边栏查看**�
 
 **English**: A docked DSH service panel — see which conversation (agent session) started which service, with start time and uptime, tri-state health, live log tail and restart replay. Zero runtime dependencies, pure-DOM client.
 
+[![npm version](https://img.shields.io/npm/v/dsh-service-board)](https://www.npmjs.com/package/dsh-service-board) [![平台](https://img.shields.io/badge/平台-Windows-brightgreen)]() [![依赖](https://img.shields.io/badge/依赖-零运行时依赖-success)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/fanjinduo111/dsh-service-board)
+
 > **本包是 [dsh-process-board](https://github.com/cyanTao/dsh-process-board) 的补丁分叉（fork），不是原项目。**
 > 上游 0.2.2 的作者是 mr-liangjx（MIT，原版权声明保留在 [LICENSE](LICENSE)）。本分叉修掉了
 > 三个真实缺陷（重启后日志变「日志不可用：no-log」、扫描器把同名启动器与同名服务当
