@@ -9,8 +9,15 @@
 // dsh client bundle 契约：host 原样 serve 本文件，插件须自行经
 // window.__ModuleLoader__.load({id, factory}) 注册。全部代码留在 factory 闭包内
 // ——classic script 顶层 const/let 会进全局词法环境与其他插件撞名。
+//
+// 这个 id 必须**等于 npm 包名**：宿主按包名生成 boot graph 的 row id，并据此查找本模块。
+// 若两者不一致（本仓库改名后曾出现：包名 dsh-service-board、id dsh-process-board），
+// 装载器在 batch 里找不到该 row 注册的模块，就回落到本包自己的 one-resource URL 再执行
+// 一次脚本 → "client-modules: duplicate factory registration for dsh-process-board"，
+// 于是侧边栏入口根本不会出现（打包安装时实测到，见 docs/patches.md）。
+// scripts/set-identity.mjs 改名时会一并改这里，test/package-identity.test.mjs 守着它。
 window.__ModuleLoader__.load({
-  id: 'dsh-process-board',
+  id: 'dsh-service-board',
   factory: () => {
 
 const API = '/api/plugins/process-board'

@@ -93,7 +93,13 @@ try {
     bundlesInspected += 1;
     const hits = MARKERS.filter(({ needle }) => text.includes(needle)).length;
     perBundle.push(`${text.length}B/${hits} markers`);
-    if (hits > 0) servedBundle = text;
+    if (hits > 0) {
+      servedBundle = text;
+      // Which bundle carried the plugin matters when one is served twice: a duplicate
+      // client registration ("bundle executed twice without invalidate?") is exactly how
+      // a packaged install can fail to activate, and the URL says which copy it was.
+      console.log(`patch bundle   : ${target.slice(0, 120)} (${text.length}B)`);
+    }
   }
   const markerReport = MARKERS.map(({ needle, label }) => `${label}=${servedBundle.includes(needle)}`);
   console.log(`bundles seen   : ${bundlesInspected} (${perBundle.join(", ")})`);
@@ -459,6 +465,9 @@ try {
       const opened = await readBand();
       console.log(`band opened    : "${opened.title}" watching="${opened.text.slice(0, 40)}"`);
       if (!/fixture listening|tick/.test(opened.text)) problems.push(`the log band shows no output for the fixture: "${opened.text.slice(0, 60)}"`);
+      // A screenshot of the band holding real log content, for the README's 效果预览.
+      await page.screenshot({ path: resolve(shots, "panel-log.png") });
+      console.log(`screenshot     : ${resolve(shots, "panel-log.png")}`);
 
       if (!(await clickInRow(fixturePort, "重启"))) {
         problems.push("the fixture row has no 重启 button");

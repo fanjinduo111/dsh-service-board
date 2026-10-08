@@ -1,0 +1,6 @@
+# dsh-service-board bundle patch: inserts the plugin row into the web profile
+# roster. Activate with:
+#   dsh plugin --profile web add dsh-service-board
+- insert:
+    - id: ui-service-board
+      name: 'dsh-service-board'

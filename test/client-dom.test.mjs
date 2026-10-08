@@ -14,6 +14,7 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
@@ -141,8 +142,12 @@ window.eval(source);
 
 const problems = [];
 if (registration === null) problems.push("the bundle did not register with __ModuleLoader__");
-if (registration !== null && registration.id !== "dsh-process-board") {
-  problems.push(`unexpected module id: ${registration.id}`);
+// The module id must be the package name, because the host derives the boot-graph row id
+// from the package name; a mismatch makes the loader execute this bundle twice and the
+// entry never appears (measured on the first packaged install of the fork).
+const packageName = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).name;
+if (registration !== null && registration.id !== packageName) {
+  problems.push(`unexpected module id: ${registration.id} (expected the package name ${packageName})`);
 }
 
 const bundleExports = registration.factory((name) => {
