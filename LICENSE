@@ -1,11 +1,7 @@
 MIT License
 
 Copyright (c) 2026 dsh-service-board contributors
-
-This package is a patched fork of dsh-process-board
-(https://github.com/cyanTao/dsh-process-board), Copyright (c) 2026 mr-liangjx,
-which is also released under the MIT License. The original copyright notice is
-kept here in full, as that license requires.
+Copyright (c) 2026 mr-liangjx (dsh-process-board, https://github.com/cyanTao/dsh-process-board)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
