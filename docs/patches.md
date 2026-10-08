@@ -610,3 +610,34 @@ cp <somewhere>/package/src/client/index.js "$HOME/.dsh/profiles/desktop/node_mod
 
 Restart the harness afterwards. Those two files are the only changes; the other
 seven files in the package are byte-identical to the published tarball.
+
+## The restart assertion that failed on a stopwatch, not on the product
+
+Releasing 0.3.0 ran `test/browser-check.mjs` against the package installed **from npm**
+(`dsh plugin --profile forkverify add dsh-service-board` → `+ dsh-service-board 0.3.0`) and it
+failed once:
+
+```
+after restart  : "node.exe · pid 41972" bad=true fresh=false
+FAILED: the band reported the log unavailable after a restart
+```
+
+Nothing was wrong with the package. The registry's `dist.integrity`
+(`sha512-B4pwIPoK…R3/9Q==`) matched the local tarball byte for byte, and the very next run over
+the same bytes printed `after restart: "node.exe · pid 41980" bad=false fresh=true` and
+`browser check passed`. The check broke out of its wait loop on the **first** reading that said
+`进程已结束或正在重启` — which is precisely what the band renders between the kill and the next
+`/state` poll. On an idle machine the host's rescan wins that race; with npm, pnpm, npx and
+Chromium all competing for the CPU it does not.
+
+Fixed in `test/browser-check.mjs` (commit `1b6ae44`): the loop now keeps waiting for the fresh
+reading (new pid plus live log) and reports a bad one only if it persists to the 25s deadline.
+Negative control: with the fresh-pid criterion forced never to hold, the check waits the full
+25s and then fails with the new message — `the band stayed on the old pid, reporting the log
+unavailable, for 25s after a restart: "进程已结束或正在重启，日志不再更新（pid 11676）"` — so the
+loop still reports real failures instead of passing quietly. `test/` is not in the published
+tarball, so the released 0.3.0 artefact is unchanged.
+
+The gap this exposes is worth naming: for a *timing* assertion, "wait longer" and "wait for the
+good state" are different fixes, and only the second one keeps a real regression detectable.
+

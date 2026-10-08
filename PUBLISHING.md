@@ -82,6 +82,58 @@ npm publish --access public      # publishConfig.access 已设 public
 git tag v0.3.0 && git push --tags
 ```
 
+### 2.1 2FA 与 token 权限（2026-10-08 实测踩到的坑）
+
+账号开了 2FA 时，直接 `npm publish` 会报：
+
+```
+E403 ... Two-factor authentication or granular access token with bypass 2fa enabled is required
+```
+
+三条路，按推荐顺序：
+
+1. **`npm publish --otp=<认证器 6 位码>`** —— 用本机 `npm login` 的凭据加动态码，一次成功，
+   不必生成长期 token（本仓库 0.3.0 第一次真正发布走的就是它）。
+2. 建 **Granular Access Token**：权限必须选 **`Read and write (publish and stage)`**，并勾 **Bypass 2FA**。
+   ⚠️ 选成旁边那项 **`Read and write (stage only)`** **不会报错**，而是把包送进暂存区：线上出现的
+   版本号是占位符 **`0.0.0-stage`**（`latest` 也指向它），真正的 `0.3.0` 要稍后才被放行。
+   本次就是这么踩的——第一次发完 `npm view versions` 只有 `0.0.0-stage`。
+   所以发布后**必须**核对版本列表里有且只有目标版本：
+   ```bash
+   npm view dsh-service-board versions --registry=https://registry.npmjs.org
+   # 期望 [ '0.3.0' ]；出现 0.0.0-stage 就是 token 权限选错了
+   ```
+3. Trusted Publishing（CI 专用）或关掉 2FA —— 本机手工发版不适用。
+
+### 2.2 发布后核验（三件，缺一不可）
+
+```bash
+# 1) 版本与 latest
+npm view dsh-service-board version dist-tags.latest --registry=https://registry.npmjs.org
+
+# 2) 线上 tarball 与本地验证过的文件逐字节一致
+npm view dsh-service-board@0.3.0 dist.integrity --registry=https://registry.npmjs.org
+node -e "const c=require('crypto'),f=require('fs');console.log('sha512-'+c.createHash('sha512').update(f.readFileSync('.package/dsh-service-board-0.3.0.tgz')).digest('base64'))"
+
+# 3) 按 README 那条命令装一遍，再真机跑浏览器自检
+dsh plugin --profile <干净profile> add dsh-service-board --registry=https://registry.npmjs.org
+dsh --profile <干净profile> --port 19412 --no-open      # 打印带 token 的 URL
+node test/browser-check.mjs "<上面那个 URL>"
+```
+
+`--registry=https://registry.npmjs.org` **不能省**：本机 `~/.npmrc` 指向 `registry.npmmirror.com`
+（只读镜像），镜像同步有延迟，刚发布的包直接装可能拿到 404。
+
+### 2.3 撤销类操作的额外限制
+
+`npm unpublish` 会被 bypass-2FA 的 granular token 拒绝：
+
+```
+E403 ... Granular access tokens that bypass two-factor authentication may not perform this action.
+```
+
+要删版本就用 `npm login` 的凭据加 `--otp`，或在 npm 网站的包 Settings 里删。
+
 ## 3. 提交到插件市场（免费）
 
 | 市场 | 入口 | 说明 |
@@ -116,3 +168,14 @@ git tag v0.3.0 && git push --tags
 - **重启会等一次扫描**（1–3 秒）：这是修「重启后 no-log」的直接代价，`/start` 要等新进程进入
   扫描结果才回包。按钮上表现为短暂「执行中…」。
 - **同时装上游会重复两行入口**：两个包各自注册自己的插件行，这是设计使然，不是 bug。
+
+## 7. 发布记录
+
+| 项 | 值 |
+|---|---|
+| 仓库 | <https://github.com/fanjinduo111/dsh-service-board>（public，topics 含 `dsh-plugin`，LICENSE 被 GitHub 识别为 MIT） |
+| npm | `dsh-service-board@0.3.0`，`latest`；`dist.integrity` = `sha512-B4pwIPoK…R3/9Q==`，与本仓库打出的 `.package/dsh-service-board-0.3.0.tgz` 逐字节一致 |
+| git tag | `v0.3.0` |
+| 收录申请 | <https://github.com/dshplugin/dsh-plugin-hub/issues/118>（先 `unconfirmed`，人工核实后转 `verified`；README 已含安装命令，爬虫刷新即可发现） |
+| 线上遗留 | `0.0.0-stage`（stage-only token 造成的占位版本，见 2.1；不影响安装，`latest` 已是 0.3.0；删除按钮受 2.3 限制） |
+| 真机验证 | 按 README 命令从 npm 装入干净 profile，`browser-check.mjs` 通过：`after restart: "node.exe · pid 41112" bad=false fresh=true` |
