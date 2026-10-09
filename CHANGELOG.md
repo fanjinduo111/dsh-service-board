@@ -1,20 +1,34 @@
 # Changelog
 
-## 0.3.1 — 扫描失败时告诉你原因，而不是把整条命令倒给你
-
-用户报回来的原话是「扫描错误：`Command failed: powershell.exe -NoProfile -NonInteractive
--ExecutionPolicy Bypass -Command $ErrorActionPreference='Stop' Add-Type …`」——六千米长的内嵌
-C# 与 PowerShell，**一个字的真正原因都没有**。
+## 0.3.1 — 只绑 IPv6 的服务不再凭空消失；扫描失败也不再只报命令
 
 ### Fixed
 
-- **扫描失败的报错只剩命令、没有原因。** `execFile` 的 reject 消息本来就只是命令行；真正的原因
-  （stderr：`Add-Type` 被策略禁止、`Get-CimInstance` 报 `The RPC server is unavailable`、
-  受限语言模式、执行策略拒绝）留在 error 对象里，从来没有被读过。现在宿主把 stderr 归一成
-  一句话，认出四类常见原因并直接点名（受限语言模式 / WMI-CIM 不可用 / 命令超时 / 执行策略），
-  附退出码与最多 400 字详情；**任何情况下都不再把命令行带回消息里**。
-  纯函数 `describeScanFailure`（`src/host/scanner.js`）便于脱离 PowerShell 单测：
-  `test/scan-error.test.mjs` 用 execFile 真实会产生的错误对象覆盖四类原因 + spawn ENOENT，
+- **只监听 IPv6 的服务整条看不见。** 取端口的命令写的是 `netstat -ano -p tcp`，而这个开关
+  **只列 TCPv4**；`localhost` 在装了 IPv6 的机器上常被解析成 `::1`，于是 vite / Node 这类只绑
+  `[::1]:9528` 的服务在端口表里查不到 PID，`ports` 为空，随即被第一道闸门
+  （`ports.length === 0 && (!logPath || NOISE.test(name))`）整条丢弃——面板上什么都没有，
+  也**没有任何报错**。实测本机：`-p tcp` 69 条、`-p tcpv6` 16 条、`-ano` 85 条（正好相加），
+  只绑 IPv6 的监听有 16 个。改用 `netstat -ano`（UDP 行没有 `LISTENING` 状态，实测 113 行里
+  0 行命中，会被过滤掉，不引入噪音）。
+- **端口列的 IPv6 显示三处错误。** 具体地址现在带方括号（`[::1]:9528`；`::1:9528` 既不是合法
+  URL 也不像地址）；仅 IPv6 的通配绑定显示为 `[::]:p` 并在 title 里说明 IPv4 下不可访问，
+  不再冒充 `0.0.0.0:p`；双栈服务（`0.0.0.0:p` + `[::]:p`）合并成一条标签，而不是两条一模一样的。
+- **扫描失败的报错只剩命令、没有原因。** 用户报回来的原话是「扫描错误：`Command failed:
+  powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
+  $ErrorActionPreference='Stop' Add-Type …`」——六千米长的内嵌 C# 与 PowerShell，**一个字的
+  真正原因都没有**。`execFile` 的 reject 消息本来就只是命令行；真正的原因（stderr：`Add-Type`
+  被策略禁止、`Get-CimInstance` 报 `The RPC server is unavailable`、受限语言模式、执行策略拒绝）
+  留在 error 对象里，从来没有被读过。现在宿主把 stderr 归一成一句话，认出四类常见原因并直接
+  点名，附退出码与最多 400 字详情，**任何情况下都不再把命令行带回消息里**。
+
+### Tests
+
+- `test/ipv6-ports.test.mjs`：真起一个 `[::1]` 监听，再跑真扫描器，断言它带着端口与 `::1` 地址
+  出现在结果里；对照断言 `netstat -ano -p tcp` **看不见**它（证明这条测试在修复前必然失败）。
+- `test/client-dom.test.mjs`：`[::1]:5400` 必须带方括号、`[::]:5401` 只出现一次且 title 说明
+  仅 IPv6、双栈的 `0.0.0.0:3306` 只渲染一条。
+- `test/scan-error.test.mjs`：用 `execFile` 真实会产生的错误对象覆盖四类原因 + spawn ENOENT，
   并守住「新消息里不得再出现 `-ExecutionPolicy Bypass`」这条反向对照。
 
 ## 0.3.0 — 第一次分叉发布（fork of dsh-process-board 0.2.2）

@@ -1107,12 +1107,30 @@ function apply(ctx) {
       ? e.binds
       : (e.ports ?? []).map((port) => ({ addr: '', port }))
     if (binds.length === 0) return '<span class="dshpb-code" style="color:#6b7280">—</span>'
+    const isWild = (addr) => addr === '0.0.0.0' || addr === '::' || addr === ''
+    const hasV4Wildcard = (port) => binds.some((b) => (b.addr === '0.0.0.0' || b.addr === '') && b.port === port)
+    const seen = new Set()
     const tags = binds.map((bind) => {
-      const wildcard = bind.addr === '0.0.0.0' || bind.addr === '::' || bind.addr === ''
-      const label = wildcard ? `0.0.0.0:${bind.port}` : `${bind.addr}:${bind.port}`
+      const v4Wild = bind.addr === '0.0.0.0' || bind.addr === ''
+      const v6Wild = bind.addr === '::'
+      const wildcard = isWild(bind.addr)
+      // 双栈服务会给出同一端口的两个通配绑定（`0.0.0.0:p` 与 `[::]:p`）：合成一条，沿用
+      // `0.0.0.0:p`（与今天一致）并去掉重复标签。只有在该端口**没有** IPv4 通配时，IPv6 通配
+      // 才单独显示成 `[::]:p` —— 否则就是在虚报「IPv4 也能访问」。
+      // 具体地址逐条保留；IPv6 地址一律加方括号：`::1:9528` 既不是合法 URL 也不像地址，
+      // `[::1]:9528` 才和 netstat 的写法一致、也才是能粘进浏览器/curl 的形式。
+      const host = v6Wild && !hasV4Wildcard(bind.port) ? '[::]'
+        : wildcard ? '0.0.0.0'
+          : bind.addr.includes(':') ? `[${bind.addr}]`
+            : bind.addr
+      const label = `${host}:${bind.port}`
+      if (seen.has(label)) return ''
+      seen.add(label)
       const title = wildcard
-        ? `0.0.0.0:${bind.port} — 监听全部网卡，局域网内其他设备可访问`
-        : `${bind.addr}:${bind.port} — 仅该地址可访问`
+        ? (v6Wild && !v4Wild
+          ? `${label} — 监听本机全部 IPv6 地址（IPv4 下不可访问）`
+          : `${label} — 监听全部网卡，局域网内其他设备可访问`)
+        : `${label} — 仅该地址可访问`
       return `<span class="dshpb-port${wildcard ? ' dshpb-port-any' : ''}" title="${escapeAttr(title)}">${escapeHtml(label)}</span>`
     }).join('')
     // One wrapper per cell, so several tags wrap inside the cell instead of widening

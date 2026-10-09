@@ -117,7 +117,9 @@ try {
     console.log(`   logPath     : ${entry.logPath ?? "(none)"}`);
     if (entry.state !== "running") problems.push(`the panel reports state ${entry.state}, expected running`);
     if (entry.http !== 200) problems.push(`the HTTP probe returned ${entry.http}, expected 200`);
-    const ports = entry.binds.map((bind) => bind.port).sort((a, b) => a - b);
+    // Unique ports: a dual-stack service legitimately reports more binds than ports now that
+    // IPv6 listeners are collected (`0.0.0.0:8080` plus `[::]:8080` for one socket pair).
+    const ports = [...new Set(entry.binds.map((bind) => bind.port))].sort((a, b) => a - b);
     if (JSON.stringify(ports) !== JSON.stringify([MAIN_PORT, SECOND_PORT])) {
       problems.push(`the row should show both ports, got ${JSON.stringify(ports)}`);
     }

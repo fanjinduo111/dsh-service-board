@@ -40,7 +40,13 @@ while($stack.Count -gt 0){
 # 监听端口 + 绑定地址（面板要显示服务绑在哪个 IP 上，所以地址不能丢）
 $ports=@{}
 try{
-  $nl=(netstat -ano -p tcp) -match 'LISTENING'
+  # 不要写 -p tcp：那个开关**只列 TCPv4**，而 localhost 在装了 IPv6 的机器上常被解析成 ::1，
+  # 于是 Node/vite 这类只绑 [::1]:9528 的服务在端口表里查不到 PID，ports 为空，随后被
+  # "无端口且无日志标记" 那道闸门整条丢弃——面板上什么都看不见，也没有任何报错。
+  # 实测本机：-p tcp 69 条、-p tcpv6 16 条、-ano 85 条（正好相加）。
+  # 不加 -p 会连 UDP 一起列，但 UDP 行永远没有 LISTENING 状态（实测 113 行 UDP 中 0 行命中），
+  # 下面的 LISTENING 过滤会把它清掉。
+  $nl=(netstat -ano) -match 'LISTENING'
   foreach($l in $nl){
     $parts=($l -replace '\\s+',' ').Trim() -split ' '
     if($parts.Count -ge 4){

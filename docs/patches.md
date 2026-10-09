@@ -748,6 +748,55 @@ attribution needs that compile step; without it the panel could still list proce
 could not say which conversation started them — which is the panel's entire premise, so failing
 loudly (and now legibly) is the better default.
 
+## The `-p tcp` that hides every IPv6 service
+
+Reported as "my vite dev server is running, and the panel does not list it". It was running: a
+`node.exe … vite.js --mode development` whose parent was the `powershell.exe` the host had
+launched. It was also invisible, and the port table said why:
+
+```
+$ netstat -ano -p tcp   | Select-String 9528   -> nothing
+$ netstat -ano -p tcpv6 | Select-String 9528   -> TCP [::1]:9528 [::]:0 LISTENING 2488
+```
+
+vite's default host is `localhost`, which resolves to `::1` on that machine, so it listened on IPv6
+loopback only — and `-p tcp` lists **TCPv4 only**. With no row, `ports` came out empty, and the
+first gate in `scanProcesses` (`ports.length === 0 && (!logPath || NOISE.test(name))`) dropped the
+whole entry. No error, no warning: one missing row. The same machine had 25 IPv6-only listeners,
+none of them visible.
+
+The template had already anticipated IPv6 in the *display* (`$addr -replace '^\[|\]$',''` strips
+the brackets netstat prints) and then filtered the addresses away one line earlier.
+
+Measured on this machine before the fix:
+
+| command | listeners |
+|---|---|
+| `netstat -ano -p tcp` (what shipped) | 69 |
+| `netstat -ano -p tcpv6` | 16 |
+| `netstat -ano` | 85 — exactly 69 + 16 |
+
+Dropping `-p` also lists UDP, which was the reason to be cautious; the `LISTENING` filter already
+in the pipeline removes it, measured rather than assumed (113 UDP rows, 0 of them matching).
+
+**The fix has two halves**, because collecting IPv6 addresses exposes a renderer written for IPv4:
+
+- `netstat -ano` in the scanner, so both stacks are collected.
+- `bindTags` in the client: a specific IPv6 address is shown bracketed (`[::1]:9528` — `::1:9528` is
+  neither a legal URL nor readable as an address), a v6-only wildcard is shown as `[::]:p` with a
+  title saying IPv4 cannot reach it rather than masquerading as `0.0.0.0:p`, and the dual-stack pair
+  (`0.0.0.0:p` plus `[::]:p`, which Windows reports for one socket pair) collapses into a single tag
+  instead of two identical ones.
+
+`test/ipv6-ports.test.mjs` opens a real `[::1]` listener in its own process and asks the real
+scanner whether it can see it — with a control asserting that the old command cannot, so the test
+is known to be capable of failing. `test/client-dom.test.mjs` pins all three rendering shapes.
+
+One quieter consequence: a dual-stack service now reports two binds for one port, so
+`test/live-service.mjs` had to compare *unique* ports. Any check that assumed `binds.length ===
+ports.length` would have started crying wolf on every MySQL on the machine.
+
+
 
 
 

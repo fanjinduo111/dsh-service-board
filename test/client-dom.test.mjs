@@ -62,8 +62,17 @@ let stateEntries = [
     pid: 7300,
     name: "node.exe",
     cmd: '"C:\\Program Files\\nodejs\\node.exe" D:\\work\\server.js',
-    ports: [5399],
-    binds: [{ addr: "127.0.0.1", port: 5399 }],
+    ports: [5399, 5400, 5401],
+    // Three shapes of IPv6 bind, because the scanner now reports them and the old
+    // renderer got all three wrong: a specific ``[::1]`` address (vite's default
+    // `localhost` on a machine like this one binds exactly that), and a
+    // v6-only wildcard, which must not be labelled `0.0.0.0` — it is not reachable
+    // over IPv4 at all.
+    binds: [
+      { addr: "127.0.0.1", port: 5399 },
+      { addr: "::1", port: 5400 },
+      { addr: "::", port: 5401 },
+    ],
     // The scanner reports the creation time as FILETIME seconds (since 1601),
     // which is what the PowerShell probe reads. Exactly two hours ago, so the
     // age the row must show is "2时0分" and not something that has to be guessed.
@@ -82,7 +91,13 @@ let stateEntries = [
     name: "mysqld.exe",
     cmd: "",
     ports: [3306],
-    binds: [{ addr: "0.0.0.0", port: 3306 }],
+    // Dual-stack: Windows binds `[::]:3306` alongside `0.0.0.0:3306`, so the port column
+    // gets two wildcard binds for one socket pair. They must collapse into one tag —
+    // two identical `0.0.0.0:3306` labels look like a rendering bug.
+    binds: [
+      { addr: "0.0.0.0", port: 3306 },
+      { addr: "::", port: 3306 },
+    ],
     state: "running",
     http: 0,
     session: "unknown",
@@ -260,6 +275,26 @@ if (entry !== null) {
     }
     if (!portLabels.some((label) => label.includes("0.0.0.0:3306"))) {
       problems.push(`the wildcard bind is not shown with its address (got ${JSON.stringify(portLabels)})`);
+    }
+    // IPv6 addresses carry brackets: `::1:5400` is neither a legal URL nor readable as an
+    // address, and `[::1]:5400` is what netstat prints and what pastes into a browser.
+    if (!portLabels.some((label) => label.includes("[::1]:5400"))) {
+      problems.push(`a specific IPv6 bind is not shown with brackets (got ${JSON.stringify(portLabels)})`);
+    }
+    // A v6-only wildcard must not be labelled `0.0.0.0`: that would claim IPv4 reachability
+    // it does not have.
+    const v6Only = portLabels.filter((label) => label === "[::]:5401");
+    if (v6Only.length !== 1) {
+      problems.push(`a v6-only wildcard should read [::]:5401 exactly once (got ${JSON.stringify(portLabels)})`);
+    }
+    const v6OnlyTitle = portTags.find((tag) => tag.textContent === "[::]:5401")?.getAttribute("title") ?? "";
+    if (!/IPv6/.test(v6OnlyTitle)) {
+      problems.push(`a v6-only wildcard should say it is IPv6-only in its title (got ${JSON.stringify(v6OnlyTitle)})`);
+    }
+    // The dual-stack pair collapses: one tag, not two identical ones.
+    const dualStack = portLabels.filter((label) => label === "0.0.0.0:3306");
+    if (dualStack.length !== 1) {
+      problems.push(`a dual-stack wildcard pair should render one tag, got ${dualStack.length} (${JSON.stringify(portLabels)})`);
     }
     const anyTag = portTags.find((tag) => tag.textContent.includes("0.0.0.0"));
     if (anyTag !== undefined && !/局域网|全部网卡/.test(anyTag.getAttribute("title") ?? "")) {
