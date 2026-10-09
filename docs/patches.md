@@ -677,4 +677,40 @@ registering `dsh-service-board`) and now reports all six client-bearing packages
 consistent. It follows symlinks, because pnpm installs plugins as links into its store — the
 first version silently skipped the very profile the fork had been installed into.
 
+## The entry that vanished with no error at all
+
+Fixing the id above made the web UI open again, but the panel's sidebar entry was still gone —
+which sent the investigation somewhere else entirely. The cause sits in the profile manifest, and
+`cordis.yml` states the mechanism itself:
+
+```
+# The tree is composed as patches: each bundle in package.json's dsh.profile.bundles, then
+# cordis.patch.yml, then any --patch overlays.
+```
+
+`dsh-process-board` ships a `cordis.patch.yml` that inserts its roster row
+(`insert: - id: ui-process-board / name: 'dsh-process-board'`) and its manifest declares
+`dsh.bundle.patch: ./cordis.patch.yml`. So the plugin's row exists **only while its name is in
+`dsh.profile.bundles`**. The desktop profile had lost both `dsh-process-board` and `dshmarket`
+from that list (manifest last written 2026-10-08 22:24; the profile's own `cordis.patch.yml`
+carries only chat/settings/llm rows) — no row was inserted, and nothing anywhere reported an
+error.
+
+Causality was measured on a throwaway clone of the profile, same package set:
+
+| bundles contains the plugin | result |
+|---|---|
+| no | page loads, `console errors: (none)`, `entries: 0`, no panel node |
+| yes | `entries: 1`, panel node present, page text starts with `进程面板` |
+
+One name in a JSON array, no error message, one missing feature — the same shape as the client-id
+defect, and the reason `scripts/doctor-client-ids.mjs` now checks both invariants: a direct
+dependency whose manifest declares `dsh.bundle.patch` must appear in `dsh.profile.bundles`.
+Negative control: dropping the name from the clone's manifest makes the runner report
+`bundle patch ./cordis.patch.yml is NOT in dsh.profile.bundles` and exit 1.
+
+`dsh plugin --profile <p> add <package>` maintains that list for you (which is why the fork
+installed that way worked first time); editing a profile manifest by hand does not.
+
+
 

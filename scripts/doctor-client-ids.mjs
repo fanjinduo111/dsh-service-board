@@ -86,12 +86,34 @@ let checked = 0;
 let skipped = 0;
 const problems = [];
 for (const profile of profiles) {
+  const short = profile.split(/[\\/]/).pop();
+
+  // Second invariant, learned the hard way on 2026-10-08: a profile's tree is composed from
+  // "each bundle listed in package.json's dsh.profile.bundles, then cordis.patch.yml". A
+  // package that ships a bundle patch only reaches the roster while its name is in that list.
+  // Dropping the name removes every row the bundle inserts, silently: no error, no console
+  // message, just one entry fewer in the web UI. Only direct dependencies are compared,
+  // because transitive bundles belong to whoever depends on them.
+  let bundles = [];
+  let deps = [];
+  try {
+    const profileManifest = JSON.parse(readFileSync(join(profile, "package.json"), "utf8"));
+    bundles = profileManifest.dsh?.profile?.bundles ?? [];
+    deps = Object.keys(profileManifest.dependencies ?? {});
+  } catch {
+    // A profile with no readable manifest has nothing to compare against.
+  }
+
   for (const pkgDir of packages(profile)) {
     let manifest;
     try {
       manifest = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
     } catch {
       continue;
+    }
+    if (manifest.dsh?.bundle?.patch !== undefined && deps.includes(manifest.name) && !bundles.includes(manifest.name)) {
+      problems.push(`${short}/${manifest.name}: ships a bundle patch (${manifest.dsh.bundle.patch}) and is a direct dependency, but is missing from dsh.profile.bundles — none of its rows are inserted, so its panel entry never appears`);
+      console.log(`FAIL  ${short}/${manifest.name}@${manifest.version}  bundle patch ${manifest.dsh.bundle.patch} is NOT in dsh.profile.bundles`);
     }
     let registered = null;
     let where = null;
@@ -109,14 +131,14 @@ for (const profile of profiles) {
     }
     checked += 1;
     const ok = registered === manifest.name;
-    console.log(`${ok ? "ok  " : "FAIL"}  ${profile.split(/[\\/]/).pop()}/${manifest.name}@${manifest.version}  client id=${registered}${where === null ? "" : ` (${where})`}`);
-    if (!ok) problems.push(`${profile.split(/[\\/]/).pop()}/${manifest.name}: client id "${registered}" != package name "${manifest.name}" — this package will fail to activate its web entry`);
+    console.log(`${ok ? "ok  " : "FAIL"}  ${short}/${manifest.name}@${manifest.version}  client id=${registered}${where === null ? "" : ` (${where})`}`);
+    if (!ok) problems.push(`${short}/${manifest.name}: client id "${registered}" != package name "${manifest.name}" — this package will fail to activate its web entry`);
   }
 }
 console.log(`\n${checked} package(s) with a client bundle checked, ${skipped} without one skipped`);
 if (problems.length > 0) {
-  console.error("\nMISMATCHES:");
+  console.error("\nPROBLEMS:");
   for (const problem of problems) console.error(`  - ${problem}`);
   process.exit(1);
 }
-console.log("every client module id matches its package name");
+console.log("every client module id matches its package name, and every bundle patch is listed");

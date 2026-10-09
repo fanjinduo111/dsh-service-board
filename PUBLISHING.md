@@ -151,9 +151,10 @@ E403 ... Granular access tokens that bypass two-factor authentication may not pe
 - [ ] LICENSE 保留上游版权声明；README 明确写这是 fork、指向原项目
 - [ ] `package.json` 的 `version` 与 `CHANGELOG.md` 顶部一致（`test/package-identity.test.mjs` 会查）
 - [ ] **客户端模块 id == npm 包名**（改过包名就必须同步；否则入口不出现，且只在真机才暴露）
-- [ ] `node scripts/doctor-client-ids.mjs` 全 ok（装完插件后跑；id 与包名不一致时症状是**整个 DSH 界面打不开**，不是只少一个入口）
+- [ ] `node scripts/doctor-client-ids.mjs` 全 ok（装完插件后跑；它同时查两件事：客户端 id == 包名，以及带 `dsh.bundle.patch` 的依赖是否出现在 `dsh.profile.bundles` 里）
 - [ ] `dsh plugin --profile <干净profile> add <tarball>` 后 `browser-check.mjs` 全绿
 - [ ] **`src/` 是真实目录，不是指向已安装插件的 junction**（`test/package-identity.test.mjs` 会拒；见 §8）
+- [ ] **profile 的 `dsh.profile.bundles` 列着本包**（缺了它，插件自带的 `cordis.patch.yml` 不生效 → 入口静默消失，无任何报错；见 §9）
 - [ ] 别和上游 `dsh-process-board` 同时装在同一个 profile（会插两行侧边栏入口）
 
 ## 5. 之后每次发版
@@ -225,3 +226,25 @@ node scripts/doctor-client-ids.mjs
 
 要拆 junction 时用 `cmd /c rmdir <目录>`——**不要**用 `Remove-Item -Recurse`，它会顺着链接
 删进目标里。
+
+## 9. 入口不见了：按这个顺序查（2026-10-08 两次都踩在这上面）
+
+插件装了、DSH 也能开，但侧边栏就是没有那一行。三个原因、三种症状，别混：
+
+| 症状 | 原因 | 怎么修 |
+|---|---|---|
+| **整个 DSH 网页打不开**（白屏/转圈，DevTools 里 `duplicate factory registration`、`web boot: 1 entry did not activate`） | 客户端模块 id ≠ 包名（§8 的事故） | 把 id 改成包名；`node scripts/doctor-client-ids.mjs` 会查出来 |
+| **界面正常、就是没有那一行**，控制台一条报错都没有 | profile 的 `dsh.profile.bundles` 里没有本包 → 它自带的 `cordis.patch.yml` 不生效，行没被插入 | 加进 bundles：`node scripts/set-bundles.mjs <profile/package.json> add <包名>`（或直接 `dsh plugin --profile <p> add <包名>` 让它自己维护） |
+| **装上完全没反应**，且 `node_modules` 里查不到 | 装错地方（用了 `npm i` / 全局装），DSH 根本不知道它 | 用 `dsh plugin --profile <p> add <包名>` |
+
+改完都要**完全退出 DSH 应用再打开**（侧面栏与客户端启动图是宿主启动时装配的，刷新网页不够）。
+一条命令同时体检前两项：
+
+```powershell
+node scripts/doctor-client-ids.mjs
+```
+
+> 为什么 bundles 会自己少一项？本机这次的清单是 2026-10-08 22:24 被某次 profile 重写改小的
+> （同时少了 `dshmarket`）。最可能是当时那个插件**加载失败**触发了应用的整理；无法证实，
+> 所以留一句提示：若加回后又消失，先看 `dsh.profile.bundles` 是否又被清掉，再把启动日志/控制台
+> 的宿主半报错发出来。
