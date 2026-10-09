@@ -235,6 +235,7 @@ node scripts/doctor-client-ids.mjs
 |---|---|---|
 | **整个 DSH 网页打不开**（白屏/转圈，DevTools 里 `duplicate factory registration`、`web boot: 1 entry did not activate`） | 客户端模块 id ≠ 包名（§8 的事故） | 把 id 改成包名；`node scripts/doctor-client-ids.mjs` 会查出来 |
 | **界面正常、就是没有那一行**，控制台一条报错都没有 | profile 的 `dsh.profile.bundles` 里没有本包 → 它自带的 `cordis.patch.yml` 不生效，行没被插入 | 加进 bundles：`node scripts/set-bundles.mjs <profile/package.json> add <包名>`（或直接 `dsh plugin --profile <p> add <包名>` 让它自己维护） |
+| **网页端有入口、桌面应用里没有**（或反过来） | 装到了另一个 profile：每个 profile 是独立环境 | 装到要用的那个端：`dsh plugin --profile desktop add <包名>`（桌面应用）/ `--profile web`（网页端）；先用 `dsh plugin list` 看本机有哪些 profile |
 | **装上完全没反应**，且 `node_modules` 里查不到 | 装错地方（用了 `npm i` / 全局装），DSH 根本不知道它 | 用 `dsh plugin --profile <p> add <包名>` |
 
 改完都要**完全退出 DSH 应用再打开**（侧面栏与客户端启动图是宿主启动时装配的，刷新网页不够）。

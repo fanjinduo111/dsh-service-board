@@ -46,6 +46,29 @@ DSH（DeepSeek Harness）服务面板插件——在 Web GUI 侧边栏查看**�
 
 > 前置：已安装 DSH（`dsh` 命令可用）。`dsh plugin` 底层是 pnpm，以下任一方式均可。
 
+### 先选对「装到哪个端」——`--profile` 决定它出现在哪里
+
+DSH 的每个 profile 是**相互独立的一套环境**（各自的 `node_modules`、各自的 `dsh.profile.bundles`）。
+装错 profile 的典型症状是：**在网页端看得到入口，桌面应用里没有**（或反过来），而且没有任何报错。
+
+| 你在哪儿用 DSH | profile 名 | 怎么装 |
+|---|---|---|
+| **桌面应用**（Electron 应用窗口） | 一般是 `desktop` | `dsh plugin --profile desktop add dsh-service-board`，或在应用内的插件市场里装 |
+| **网页端**（终端里 `dsh web` / 浏览器打开） | 一般是 `web` | `dsh plugin --profile web add dsh-service-board` |
+
+不确定本机有哪些 profile / 叫什么名字：
+
+```bash
+dsh plugin list                        # 列出各 profile 及其插件
+dsh plugin --profile desktop list      # 看某一个 profile
+```
+
+> 两个端互不影响，装哪个只在哪个端生效；只想用一个端就只装那一个。
+> 下面的示例统一写 `web`，桌面应用把 `--profile web` 换成 `--profile desktop` 即可。
+> 桌面应用的 profile **不能**用 `dsh --profile desktop` 直接起服务（会报
+> `profile "desktop" is managed exclusively by the Electron application`），但用 `dsh plugin`
+> 管理它的插件是允许的。
+
 ```bash
 # 方式 A（推荐）：npm 安装——版本语义化，升级方便
 dsh plugin --profile web add dsh-service-board
@@ -65,7 +88,7 @@ dsh plugin --profile web update dsh-service-board
 dsh plugin --profile web remove dsh-service-board
 ```
 
-安装后**重启 DSH 宿主**（重新 `dsh web`），浏览器刷新页面 → 侧边栏出现「进程面板」入口。
+安装后**重启 DSH 宿主**（桌面应用则完全退出应用再打开；`dsh web` 则重新起）→ 侧边栏出现「进程面板」入口。
 
 > ⚠️ `link:` 只接受**本地目录路径**；写 `link:https://...` 会被当本地路径解析失败。
 
