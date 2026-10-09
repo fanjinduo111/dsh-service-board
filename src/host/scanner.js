@@ -235,6 +235,44 @@ export function mergeWorkers(services) {
 }
 
 /**
+ * 把扫描时被 PowerShell 拒绝的错误变成人能看懂的一句话。
+ *
+ * `execFile` 的 reject 消息**只有命令行**：六千米长的内嵌 C# 与 PowerShell，而真正的原因
+ * （stderr：Add-Type 被策略禁止、WMI 服务不可用、受限语言模式）留在 error 对象里，
+ * 面板从来没读过它。用户报回来的就是这一整堵墙，看不到任何可用信息。
+ *
+ * 写成纯函数是为了能脱离 PowerShell 单测：喂给它 execFile 会产生的那些错误对象即可。
+ * 任何情况下都**不会**把命令行带回消息里。
+ *
+ * @param {unknown} error - `execFileAsync` reject 出来的东西。
+ * @returns {string} 一行说明，指出最可能的原因。
+ */
+export function describeScanFailure(error) {
+  const stderr = String(error?.stderr ?? '').trim()
+  const stdout = String(error?.stdout ?? '').trim()
+  const rawMessage = String(error?.message ?? '')
+  const detail = (stderr || stdout).replace(/\s+/g, ' ')
+  const hint = /language mode|ConstrainedLanguage/i.test(detail)
+    ? 'PowerShell 处于受限语言模式（Add-Type 被策略禁止）'
+    : /CimInstance|WMI|Management Instrumentation|RPC server|Invalid class/i.test(detail)
+      ? 'WMI/CIM 查询失败（Windows Management Instrumentation 服务不可用或被策略限制）'
+      : error?.killed === true || /timed? ?out/i.test(detail)
+        ? '命令超时或被杀掉'
+        : /Execution_Polic|running scripts is disabled|digitally signed|cannot be loaded/i.test(detail)
+          ? '执行策略拒绝运行脚本'
+          : /is not recognized|not found|ENOENT/i.test(`${detail} ${rawMessage}`)
+            ? 'powershell.exe 或系统命令不存在'
+            : ''
+  const code = error?.code === undefined || error?.code === null ? '' : `，退出码 ${error.code}`
+  const prefix = `process-board: 扫描失败${hint === '' ? '' : `：${hint}`}${code}`
+  if (detail !== '') return `${prefix}：${detail.slice(0, 400)}`
+  // 没有 stdout/stderr 时，只有 Node 自己产生的错误消息可用（例如 spawn ENOENT）；
+  // "Command failed: …" 那种带命令行的消息必须丢掉，否则又把那堵墙端回去。
+  const own = /^Command failed:/i.test(rawMessage) ? '' : rawMessage.replace(/\s+/g, ' ').trim()
+  return own === '' ? `${prefix}；powershell.exe 没有输出错误详情` : `${prefix}：${own.slice(0, 200)}`
+}
+
+/**
  * 执行一次扫描并做 JS 侧过滤/归属。
  * `created` 是进程启动时刻，单位是 FILETIME 秒（1601 起，已截断到秒）；
  * 面板减掉 1601→1970 的偏移后显示"运行 3时12分 / 启动于 …"。
@@ -251,7 +289,9 @@ export async function scanProcesses() {
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
     { timeout: SCAN_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024, windowsHide: true },
-  )
+  ).catch((error) => {
+    throw new Error(describeScanFailure(error))
+  })
   const begin = stdout.indexOf(MARKER_BEGIN)
   const end = stdout.indexOf(MARKER_END)
   if (begin < 0 || end < 0 || end <= begin) throw new Error('process-board: scan markers missing')

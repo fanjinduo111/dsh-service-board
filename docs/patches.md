@@ -712,5 +712,42 @@ Negative control: dropping the name from the clone's manifest makes the runner r
 `dsh plugin --profile <p> add <package>` maintains that list for you (which is why the fork
 installed that way worked first time); editing a profile manifest by hand does not.
 
+## The error message that was the command line
+
+A user on another machine reported the panel showing:
+
+```
+扫描错误：Command failed: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+-Command $ErrorActionPreference='Stop' Add-Type -TypeDefinition ' using System; …'
+```
+
+Six kilobytes of embedded C# and PowerShell, and not one word about what actually went wrong.
+The shape came from Node: `execFile`'s rejection message is the command it ran, and the reason —
+PowerShell's stderr — waits in `error.stderr`, which the host never read before turning the
+rejection into the response body. So the panel faithfully displayed the only thing it had.
+
+Every plausible cause of a failed scan writes to stderr and nowhere else:
+
+| what happened | what stderr says |
+|---|---|
+| `Add-Type` blocked by policy | `Method invocation is supported only on core types in this language mode` |
+| WMI unhealthy | `Get-CimInstance : The RPC server is unavailable` |
+| the command was killed | (nothing — `killed: true`, `signal: 'SIGTERM'`) |
+| script execution refused | `running scripts is disabled on this system` |
+
+`describeScanFailure` now recognises those four and names the likely cause, plus the exit code and
+at most 400 characters of detail. It is a pure function so the shapes are testable without needing
+PowerShell to fail on demand (write a unit test that *causes* an `Add-Type` restriction and it
+either cannot run anywhere or, worse, runs everywhere), and it never puts the command line back
+into the message. The control in `test/scan-error.test.mjs` asserts exactly that: the old message
+contained `-ExecutionPolicy Bypass`, the new one must not.
+
+The remaining gap is deliberate and worth naming: this makes the failure *readable*, it does not
+make the scan *work* on a machine where `Add-Type` is forbidden. The PEB read that supplies session
+attribution needs that compile step; without it the panel could still list processes and ports but
+could not say which conversation started them — which is the panel's entire premise, so failing
+loudly (and now legibly) is the better default.
+
+
 
 

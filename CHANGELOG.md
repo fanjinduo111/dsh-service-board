@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.1 — 扫描失败时告诉你原因，而不是把整条命令倒给你
+
+用户报回来的原话是「扫描错误：`Command failed: powershell.exe -NoProfile -NonInteractive
+-ExecutionPolicy Bypass -Command $ErrorActionPreference='Stop' Add-Type …`」——六千米长的内嵌
+C# 与 PowerShell，**一个字的真正原因都没有**。
+
+### Fixed
+
+- **扫描失败的报错只剩命令、没有原因。** `execFile` 的 reject 消息本来就只是命令行；真正的原因
+  （stderr：`Add-Type` 被策略禁止、`Get-CimInstance` 报 `The RPC server is unavailable`、
+  受限语言模式、执行策略拒绝）留在 error 对象里，从来没有被读过。现在宿主把 stderr 归一成
+  一句话，认出四类常见原因并直接点名（受限语言模式 / WMI-CIM 不可用 / 命令超时 / 执行策略），
+  附退出码与最多 400 字详情；**任何情况下都不再把命令行带回消息里**。
+  纯函数 `describeScanFailure`（`src/host/scanner.js`）便于脱离 PowerShell 单测：
+  `test/scan-error.test.mjs` 用 execFile 真实会产生的错误对象覆盖四类原因 + spawn ENOENT，
+  并守住「新消息里不得再出现 `-ExecutionPolicy Bypass`」这条反向对照。
+
 ## 0.3.0 — 第一次分叉发布（fork of dsh-process-board 0.2.2）
 
 基线是上游 [dsh-process-board](https://github.com/cyanTao/dsh-process-board) **0.2.2**（作者
