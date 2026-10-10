@@ -163,6 +163,19 @@ E403 ... Granular access tokens that bypass two-factor authentication may not pe
 2. `node test/package-identity.test.mjs` + 全套 `test/*.mjs`
 3. `node scripts/build-package.mjs --publish`
 4. `git tag v<版本> && git push --tags`
+5. **等 packument 翻页再改用户的依赖**：发布成功后 `GET https://registry.npmjs.org/<pkg>/<version>`
+   通常一分钟内就返回 200（此时 integrity 已可用），但 `dist-tags.latest` / `versions` 走 CDN，
+   可能还要几分钟。翻页前 `dsh plugin add <pkg>@^<version>` 会报「The latest release is …」--
+   那是缓存，不是发布失败（0.3.1 实测：版本端点 60 秒可见，packument 再等几分钟）。
+
+两个与安装有关的实测事实：
+
+- **`dsh plugin add` 记的是精确版本**（本机实测写进 profile 的是 `dsh-service-board=0.3.1`，
+  不是 `^0.3.1`），所以已有用户升级要 `add <pkg>@<新版本>`，别指望 `update` 会跨过去；
+  显式写范围（如 `add <pkg>@^0.3.0`）时才会记录范围。
+- **刚发布的版本会被供应链闸门拦住**：pnpm 的 `minimumReleaseAge` 会拒装发布不久的新版本，
+  插件管理器会自动把它加进 profile 的 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`
+  （0.3.1 实测发生了）。别人装不上新版时先看这里，别怀疑包本身。
 
 ## 6. 已知的、故意的取舍
 
@@ -174,10 +187,25 @@ E403 ... Granular access tokens that bypass two-factor authentication may not pe
 
 ## 7. 发布记录
 
+### 0.3.1（当前 `latest`）
+
+| 项 | 值 |
+|---|---|
+| npm | `dsh-service-board@0.3.1`，`latest`；`dist.integrity` = `sha512-LDQWCeEQ5JF3kTFxcHmxJiDoi5BUBUfXX2lo+rW0Wf4EObozXloXP4no+9hQAwaXpOS7ClB+p+9Q+bk8+4epnQ==`，`shasum` = `a254df93168c27132a228434c5b92cadc98fdf44` |
+| 一致性 | 该 integrity 与本仓库 `.package/dsh-service-board-0.3.1.tgz` **及 GitHub Release 附件**逐字节相同（发布时用的就是这份 tarball，`npm publish <tgz>`） |
+| git tag / Release | `v0.3.1`（附注标签）→ `afdb010`；<https://github.com/fanjinduo111/dsh-service-board/releases/tag/v0.3.1> |
+| 内容 | 只绑 IPv6 的服务不再消失（`netstat -ano`，含配套显示修正）；扫描失败说出原因而不是倒出命令行。详见 `CHANGELOG.md` 与 `docs/patches.md` |
+| 发布后处理 | 版本端点约 60 秒可见；**packument 还要几分钟**才把 `latest` 从 0.3.0 翻到 0.3.1（见 §5 第 5 条） |
+| 桌面端 | profile `desktop` 从 Release 直链换成 npm 依赖，插件管理器记为精确版本 `0.3.1`，并自动把该版本加进该 profile 的 `pnpm-workspace.yaml` → `minimumReleaseAgeExclude` |
+| 线上遗留 | `0.0.0-stage` 仍在（stage-only token 造成，见 §2.1；删除受 §2.3 限制，需网页 Settings 页） |
+| 凭据 | 发布用的 granular token 由维护者当场提供、用后即撤销；本机 `~/.npmrc` 不留 token（只有只读镜像 registry） |
+
+### 0.3.0（首个分叉版）
+
 | 项 | 值 |
 |---|---|
 | 仓库 | <https://github.com/fanjinduo111/dsh-service-board>（public，topics 含 `dsh-plugin`，LICENSE 被 GitHub 识别为 MIT） |
-| npm | `dsh-service-board@0.3.0`，`latest`；`dist.integrity` = `sha512-B4pwIPoK…R3/9Q==`，与本仓库打出的 `.package/dsh-service-board-0.3.0.tgz` 逐字节一致 |
+| npm | `dsh-service-board@0.3.0`，`dist.integrity` = `sha512-B4pwIPoK…R3/9Q==`，与本仓库打出的 `.package/dsh-service-board-0.3.0.tgz` 逐字节一致 |
 | git tag | `v0.3.0` |
 | 收录申请 | <https://github.com/dshplugin/dsh-plugin-hub/issues/118>（先 `unconfirmed`，人工核实后转 `verified`；README 已含安装命令，爬虫刷新即可发现） |
 | 线上遗留 | `0.0.0-stage`（stage-only token 造成的占位版本，见 2.1；不影响安装，`latest` 已是 0.3.0；删除按钮受 2.3 限制） |
